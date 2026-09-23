@@ -179,6 +179,30 @@ class ChatView extends GetView<ChatController> {
         );
       }),
       actions: [
+        Obx(() {
+          final isAgent = controller.isAgentMode.value;
+          return IconButton(
+            tooltip: isAgent ? 'Agent Mode: ON' : 'Agent Mode: OFF',
+            icon: Icon(
+              isAgent ? Icons.smart_toy : Icons.smart_toy_outlined,
+              size: 20,
+              color: isAgent
+                  ? const Color(0xFF5856D6)
+                  : Theme.of(context).hintColor,
+            ),
+            onPressed: () {
+              controller.toggleAgentMode();
+              Get.snackbar(
+                controller.isAgentMode.value ? 'Agent Mode On' : 'Agent Mode Off',
+                controller.isAgentMode.value
+                    ? 'Tools (Web Search, Calculate, Clipboard) are enabled.'
+                    : 'Standard chat mode active.',
+                snackPosition: SnackPosition.BOTTOM,
+                duration: const Duration(seconds: 2),
+              );
+            },
+          );
+        }),
         IconButton(
             icon: Icon(Icons.history_rounded,
                 size: 20, color: Theme.of(context).hintColor),
@@ -627,6 +651,54 @@ class ChatView extends GetView<ChatController> {
                           ),
                         ],
                       ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+            // One-Tap Action Chips for Incoming Share Intent
+            Obx(() {
+              if (!controller.hasSharedText.value) return const SizedBox.shrink();
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                height: 38,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    ActionChip(
+                      avatar: const Text('⚡', style: TextStyle(fontSize: 13)),
+                      label: Text('Summarize',
+                          style: GoogleFonts.inter(
+                              fontSize: 12, fontWeight: FontWeight.w500)),
+                      onPressed: () => controller.executeShareAction(
+                          'Summarize this into 3 concise bullet points:\n\n'),
+                    ),
+                    const SizedBox(width: 8),
+                    ActionChip(
+                      avatar: const Text('📝', style: TextStyle(fontSize: 13)),
+                      label: Text('Proofread',
+                          style: GoogleFonts.inter(
+                              fontSize: 12, fontWeight: FontWeight.w500)),
+                      onPressed: () => controller.executeShareAction(
+                          'Fix grammar, tone, and clarity for this draft:\n\n'),
+                    ),
+                    const SizedBox(width: 8),
+                    ActionChip(
+                      avatar: const Text('🎯', style: TextStyle(fontSize: 13)),
+                      label: Text('Action Items',
+                          style: GoogleFonts.inter(
+                              fontSize: 12, fontWeight: FontWeight.w500)),
+                      onPressed: () => controller.executeShareAction(
+                          'Extract all key tasks, deadlines, and action items from:\n\n'),
+                    ),
+                    const SizedBox(width: 8),
+                    ActionChip(
+                      avatar: const Text('🌐', style: TextStyle(fontSize: 13)),
+                      label: Text('Translate',
+                          style: GoogleFonts.inter(
+                              fontSize: 12, fontWeight: FontWeight.w500)),
+                      onPressed: () => controller.executeShareAction(
+                          'Translate the following text into English:\n\n'),
                     ),
                   ],
                 ),

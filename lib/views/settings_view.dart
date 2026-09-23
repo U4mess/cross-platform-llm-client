@@ -493,21 +493,67 @@ class SettingsView extends GetView<SettingsController> {
           });
         }
 
-        return _modelParameterSlider(
-          context,
-          isDark,
-          label: 'Context Size',
-          value: currentValue,
-          min: 512,
-          max: maxContext,
-          divisions: divisions,
-          safeMax: Get.find<DeviceInfoService>().maxSafeContextSize.toDouble(),
-          onChanged: (v) => controller.setContextSize(v.toInt()),
-          displayValue: currentValue.toInt().toString(),
-          icon: Icons.memory_rounded,
-          warning: isLiteRtActive
-              ? 'Context capped at 4096 to prevent driver memory crash for LiteRT models.'
-              : 'Context this large will eat all your RAM!',
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _modelParameterSlider(
+              context,
+              isDark,
+              label: 'Context Size',
+              value: currentValue,
+              min: 512,
+              max: maxContext,
+              divisions: divisions,
+              safeMax: Get.find<DeviceInfoService>().maxSafeContextSize.toDouble(),
+              onChanged: (v) => controller.setContextSize(v.toInt()),
+              displayValue: currentValue.toInt().toString(),
+              icon: Icons.memory_rounded,
+              warning: isLiteRtActive
+                  ? 'Context capped at 4096 to prevent driver memory crash for LiteRT models.'
+                  : 'Context this large will eat all your RAM!',
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    Text(
+                      'Presets:',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: Theme.of(context).hintColor,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    for (final preset in [2048, 4096, 8192]) ...[
+                      ChoiceChip(
+                        label: Text(
+                          '$preset',
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            fontWeight: controller.contextSize.value == preset
+                                ? FontWeight.w600
+                                : FontWeight.normal,
+                          ),
+                        ),
+                        selected: controller.contextSize.value == preset,
+                        onSelected: (selected) {
+                          if (selected) {
+                            final target =
+                                isLiteRtActive && preset > 4096 ? 4096 : preset;
+                            controller.setContextSize(target);
+                          }
+                        },
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
         );
       })(),
     ]);

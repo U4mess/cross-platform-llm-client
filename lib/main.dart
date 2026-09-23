@@ -24,6 +24,7 @@ import 'services/local_image_service.dart';
 import 'services/app_log_service.dart';
 import 'services/crash_reporting_service.dart';
 import 'services/image_generation_notification_service.dart';
+import 'services/agent_service.dart';
 import 'core/constants.dart';
 
 void main() {
@@ -77,6 +78,7 @@ void main() {
     Get.put(CloudService());
     Get.put(DownloadService());
     Get.put(LocalImageService());
+    Get.put(AgentService());
     final crashReporting =
         await Get.putAsync(() => CrashReportingService().init());
     FlutterError.onError = (details) {

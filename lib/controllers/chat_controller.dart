@@ -22,6 +22,7 @@ import '../services/hive_service.dart';
 import '../services/inference_service.dart';
 import '../services/cloud_service.dart';
 import '../services/local_image_service.dart';
+import '../services/agent_service.dart';
 import '../services/app_log_service.dart';
 import '../services/image_generation_notification_service.dart';
 import '../services/document_extractor_service.dart';
@@ -86,6 +87,12 @@ class ChatController extends GetxController {
   final sttAvailable = false.obs;
   final _speech = stt.SpeechToText();
 
+  // Agent Mode
+  final isAgentMode = false.obs;
+
+  // One-Tap Action Chips for Incoming Share Intent
+  final hasSharedText = false.obs;
+
   final textController = TextEditingController();
   final scrollController = ScrollController();
   Timer? _scrollTimer;
@@ -139,6 +146,7 @@ class ChatController extends GetxController {
       final text = sharedTexts.join('\n');
       textController.text = text;
       inputText.value = text;
+      hasSharedText.value = true;
       textController.selection = TextSelection.fromPosition(
         TextPosition(offset: text.length),
       );
@@ -146,6 +154,18 @@ class ChatController extends GetxController {
         Get.find<HomeController>().currentTab.value = 0;
       }
     }
+  }
+
+  void toggleAgentMode() {
+    isAgentMode.value = !isAgentMode.value;
+  }
+
+  void executeShareAction(String prefix) {
+    final current = textController.text.trim();
+    textController.text = '$prefix$current';
+    inputText.value = textController.text;
+    hasSharedText.value = false;
+    sendMessage();
   }
 
   Future<void> _initSpeech() async {
@@ -551,6 +571,7 @@ class ChatController extends GetxController {
     // because the native inference engine needs to read it during generation.
     textController.clear();
     inputText.value = '';
+    hasSharedText.value = false;
     clearImage(deleteFile: false); // Reset visual fields, do NOT delete file!
     clearFile();
     _scrollToBottom(force: true);
@@ -615,121 +636,187 @@ class ChatController extends GetxController {
               })
           .toList();
 
-      if (inferenceMode == 'local') {
+      if (inferenceMode == 'local' &&
+          Get.find<LocalImageService>().isModelLoaded.value) {
+        // Local image generation
         final localImage = Get.find<LocalImageService>();
-
-        if (localImage.isModelLoaded.value) {
-          // Local image generation
-          final settings = Get.find<SettingsController>();
-          final imageNotifications =
-              Get.find<ImageGenerationNotificationService>();
-          final steps = _hive.getSetting<int>(AppConstants.keyImageSteps,
-              defaultValue: AppConstants.defaultImageSteps) ??
-              AppConstants.defaultImageSteps;
-          final sizeSetting = settings.imageGenSize.value;
-          final sizeLabel =
-              sizeSetting == 0 ? 'Auto size' : '${sizeSetting}x$sizeSetting';
-          final backendLabel = localImage.currentBackend.value == Backend.cpu
-              ? 'CPU'
-              : localImage.currentBackend.value.displayName
-                  .split(' ')
-                  .first
-                  .toUpperCase();
-          imageGenStep.value = 0;
-          imageGenTotal.value = steps;
-          imageGenEstimatedSecs.value = 0;
-          imageGenStartTime.value = DateTime.now();
-          imageGenDecoding.value = false;
-          await imageNotifications.start(
-            modelName: localImage.loadedModelName.value,
-            backend: backendLabel,
-            steps: steps,
-            sizeLabel: sizeLabel,
-          );
-          print('[ChatController] Starting image generation for: $text');
-          final pngBytes = await localImage.generateImage(
-            prompt: text,
-            onProgress: (step, total) {
-              print('[ChatController] Progress callback: step=$step, total=$total');
-              imageGenStep.value = step;
-              imageGenTotal.value = total;
-              if (step >= total && total > 0) {
-                imageGenDecoding.value = true;
-                print('[ChatController] Sampling complete, VAE decode in progress');
-                imageNotifications.decoding();
+        final settings = Get.find<SettingsController>();
+        final imageNotifications =
+            Get.find<ImageGenerationNotificationService>();
+        final steps = _hive.getSetting<int>(AppConstants.keyImageSteps,
+            defaultValue: AppConstants.defaultImageSteps) ??
+            AppConstants.defaultImageSteps;
+        final sizeSetting = settings.imageGenSize.value;
+        final sizeLabel =
+            sizeSetting == 0 ? 'Auto size' : '${sizeSetting}x$sizeSetting';
+        final backendLabel = localImage.currentBackend.value == Backend.cpu
+            ? 'CPU'
+            : localImage.currentBackend.value.displayName
+                .split(' ')
+                .first
+                .toUpperCase();
+        imageGenStep.value = 0;
+        imageGenTotal.value = steps;
+        imageGenEstimatedSecs.value = 0;
+        imageGenStartTime.value = DateTime.now();
+        imageGenDecoding.value = false;
+        await imageNotifications.start(
+          modelName: localImage.loadedModelName.value,
+          backend: backendLabel,
+          steps: steps,
+          sizeLabel: sizeLabel,
+        );
+        print('[ChatController] Starting image generation for: $text');
+        final pngBytes = await localImage.generateImage(
+          prompt: text,
+          onProgress: (step, total) {
+            print('[ChatController] Progress callback: step=$step, total=$total');
+            imageGenStep.value = step;
+            imageGenTotal.value = total;
+            if (step >= total && total > 0) {
+              imageGenDecoding.value = true;
+              print('[ChatController] Sampling complete, VAE decode in progress');
+              imageNotifications.decoding();
+            }
+            if (step > 0 && total > 0 && step < total) {
+              final start = imageGenStartTime.value;
+              if (start != null) {
+                final elapsed = DateTime.now().difference(start).inMilliseconds;
+                final avgMsPerStep = elapsed / step;
+                final remainingSteps = total - step;
+                imageGenEstimatedSecs.value =
+                    (avgMsPerStep * remainingSteps / 1000).ceil();
               }
-              if (step > 0 && total > 0 && step < total) {
-                final start = imageGenStartTime.value;
-                if (start != null) {
-                  final elapsed = DateTime.now().difference(start).inMilliseconds;
-                  final avgMsPerStep = elapsed / step;
-                  final remainingSteps = total - step;
-                  imageGenEstimatedSecs.value =
-                      (avgMsPerStep * remainingSteps / 1000).ceil();
-                }
-              }
-              imageNotifications.update(
-                step: step,
-                total: total,
-                etaSeconds: imageGenEstimatedSecs.value,
-                elapsedSeconds: imageGenStartTime.value == null
-                    ? 0
-                    : DateTime.now()
-                        .difference(imageGenStartTime.value!)
-                        .inSeconds,
-              );
-              _scrollToBottom();
-            },
-          );
-          // Calculate total generation time
-          final genDurationMs = imageGenStartTime.value != null
-              ? DateTime.now().difference(imageGenStartTime.value!).inMilliseconds
-              : null;
-          print('[ChatController] generateImage returned, bytes=${pngBytes?.length}, duration=${genDurationMs}ms');
-
-          if (pngBytes != null) {
-            await imageNotifications.complete(durationMs: genDurationMs ?? 0);
-            rawResponse = '[IMAGE_BASE64]${base64Encode(pngBytes)}';
-          } else {
-            await imageNotifications.failed();
-            rawResponse = '❌ Local image generation failed.';
-          }
-        } else {
-          final inference = Get.find<InferenceService>();
-
-          // LiteRT models can consume image/audio attachments. GGUF currently
-          // returns a clear unsupported message from the inference layer.
-
-          rawResponse = await inference.generate(
-            prompt: effectiveText,
-            systemPrompt: _effectiveSystemPrompt,
-            conversationHistory: history,
-            source: 'chat',
-            imagePath: imagePath,
-            audioPath: fileType == 'audio' ? filePath : null,
-            onToken: (token) {
-              // Real-time streaming update
-              streamingResponse.value += token;
-              trackThoughtTiming();
-              _scrollToBottom();
-            },
-          );
-        }
-      } else {
-        final cloud = Get.find<CloudService>();
-        final apiMessages = [
-          {'role': 'system', 'content': _effectiveSystemPrompt},
-          ...history,
-        ];
-        rawResponse = await cloud.sendMessage(
-          messages: apiMessages,
-          imageBase64: imgBase64, // already encoded before clearImage()
-          onToken: (token) {
-            streamingResponse.value += token;
-            trackThoughtTiming();
+            }
+            imageNotifications.update(
+              step: step,
+              total: total,
+              etaSeconds: imageGenEstimatedSecs.value,
+              elapsedSeconds: imageGenStartTime.value == null
+                  ? 0
+                  : DateTime.now()
+                      .difference(imageGenStartTime.value!)
+                      .inSeconds,
+            );
             _scrollToBottom();
           },
         );
+        // Calculate total generation time
+        final genDurationMs = imageGenStartTime.value != null
+            ? DateTime.now().difference(imageGenStartTime.value!).inMilliseconds
+            : null;
+        print('[ChatController] generateImage returned, bytes=${pngBytes?.length}, duration=${genDurationMs}ms');
+
+        if (pngBytes != null) {
+          await imageNotifications.complete(durationMs: genDurationMs ?? 0);
+          rawResponse = '[IMAGE_BASE64]${base64Encode(pngBytes)}';
+        } else {
+          await imageNotifications.failed();
+          rawResponse = '❌ Local image generation failed.';
+        }
+      } else {
+        // Text generation (local or cloud) with Agent tool-calling support
+        final agentService = Get.find<AgentService>();
+        final toolCallRegex =
+            RegExp(r'<tool_call>(.*?)</tool_call>', dotAll: true);
+        var currentHistory = List<Map<String, String>>.from(history);
+        var currentPrompt = effectiveText;
+        String accumulatedResponse = '';
+        int toolCallsCount = 0;
+
+        while (true) {
+          final stepBuffer = StringBuffer();
+          String stepResponse = '';
+
+          void onToken(String token) {
+            stepBuffer.write(token);
+            streamingResponse.value += token;
+            trackThoughtTiming();
+            _scrollToBottom();
+
+            if (isAgentMode.value &&
+                toolCallsCount < AgentService.maxToolCallsPerTurn) {
+              if (stepBuffer.toString().contains('</tool_call>')) {
+                if (inferenceMode == 'local') {
+                  unawaited(Get.find<InferenceService>().stopGeneration());
+                }
+              }
+            }
+          }
+
+          if (inferenceMode == 'local') {
+            final inference = Get.find<InferenceService>();
+            stepResponse = await inference.generate(
+              prompt: currentPrompt,
+              systemPrompt: _effectiveSystemPrompt,
+              conversationHistory: currentHistory,
+              source: 'chat',
+              imagePath: toolCallsCount == 0 ? imagePath : null,
+              audioPath:
+                  (toolCallsCount == 0 && fileType == 'audio') ? filePath : null,
+              onToken: onToken,
+            );
+          } else {
+            final cloud = Get.find<CloudService>();
+            final apiMessages = [
+              {'role': 'system', 'content': _effectiveSystemPrompt},
+              ...currentHistory,
+            ];
+            stepResponse = await cloud.sendMessage(
+              messages: apiMessages,
+              imageBase64: toolCallsCount == 0 ? imgBase64 : null,
+              onToken: onToken,
+            );
+          }
+
+          if (generationId != _generationSerial) return;
+
+          if (stepResponse.isEmpty && stepBuffer.isNotEmpty) {
+            stepResponse = stepBuffer.toString();
+          }
+
+          // Tool call detection and execution in agent mode
+          if (isAgentMode.value &&
+              toolCallsCount < AgentService.maxToolCallsPerTurn) {
+            final match = toolCallRegex.firstMatch(stepResponse) ??
+                toolCallRegex.firstMatch(stepBuffer.toString());
+            if (match != null) {
+              final toolCallJson = match.group(1)?.trim() ?? '';
+              final toolResult =
+                  await agentService.executeToolCallJson(toolCallJson);
+              toolCallsCount++;
+
+              if (generationId != _generationSerial) return;
+
+              final toolCallBlock = match.group(0)!;
+              final toolResponseBlock =
+                  '\n<tool_response>$toolResult</tool_response>\n';
+
+              streamingResponse.value += toolResponseBlock;
+              _scrollToBottom();
+
+              accumulatedResponse += '$stepResponse$toolResponseBlock';
+
+              currentHistory.add({
+                'role': 'assistant',
+                'content': stepResponse.isNotEmpty ? stepResponse : toolCallBlock,
+              });
+              currentHistory.add({
+                'role': 'user',
+                'content': '<tool_response>$toolResult</tool_response>',
+              });
+              currentPrompt = '<tool_response>$toolResult</tool_response>';
+
+              await Future.delayed(const Duration(milliseconds: 50));
+              continue;
+            }
+          }
+
+          accumulatedResponse += stepResponse;
+          break;
+        }
+
+        rawResponse = accumulatedResponse;
       }
 
       if (thoughtStartedAt != null && thoughtDurationSeconds == null) {
@@ -916,9 +1003,13 @@ class ChatController extends GetxController {
     final modelName = settings.inferenceMode.value == 'local'
         ? inference.loadedModelName.value
         : settings.selectedCloudModelName;
-    return settings.effectiveSystemPromptForModel(
+    final basePrompt = settings.effectiveSystemPromptForModel(
       modelName,
     );
+    if (isAgentMode.value) {
+      return '$basePrompt\n\nTools available: <tool_call>{"name": "web_search", "query": "..."}</tool_call>, <tool_call>{"name": "calculate", "expression": "..."}</tool_call>, <tool_call>{"name": "read_clipboard"}</tool_call>. Output strictly the tag when calling a tool.';
+    }
+    return basePrompt;
   }
 
   String _attachmentTypeForExtension(String extension) {
