@@ -280,6 +280,10 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
     // Memory optimization: reduce memory usage by limiting batch processing
     ctx_params.n_batch = 512;  // Process smaller batches to reduce memory spikes
 
+    // KV cache quantization: configure type_k and type_v to Q4_0 instead of FP16/F32 to cut RAM footprint
+    ctx_params.type_k = GGML_TYPE_Q4_0;
+    ctx_params.type_v = GGML_TYPE_Q4_0;
+
     // Create context (using new API)
     g_ctx = llama_init_from_model(g_model, ctx_params);
     if (!g_ctx) {

@@ -10,7 +10,9 @@ import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:uuid/uuid.dart';
+import '../controllers/home_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../core/constants.dart';
 import '../models/chat_message.dart';
@@ -87,6 +89,7 @@ class ChatController extends GetxController {
   final textController = TextEditingController();
   final scrollController = ScrollController();
   Timer? _scrollTimer;
+  StreamSubscription? _intentSub;
   bool _followStreaming = true;
   bool _scrollListenerAttached = false;
   int _generationSerial = 0;
@@ -98,6 +101,51 @@ class ChatController extends GetxController {
     _scrollListenerAttached = true;
     loadSessions();
     _initSpeech();
+    _initSharingIntent();
+  }
+
+  void _initSharingIntent() {
+    if (kIsWeb) return;
+    try {
+      // Listen to incoming shared media/text while the app is in memory
+      _intentSub = ReceiveSharingIntent.instance.getMediaStream().listen(
+        _handleSharedFiles,
+        onError: (err) {
+          Get.find<AppLogService>().warning('Receive sharing stream error', details: err);
+        },
+      );
+
+      // Handle shared media/text when the app is launched from closed state
+      ReceiveSharingIntent.instance.getInitialMedia().then((files) {
+        if (files.isNotEmpty) {
+          _handleSharedFiles(files);
+          ReceiveSharingIntent.instance.reset();
+        }
+      }).catchError((err) {
+        Get.find<AppLogService>().warning('Receive initial sharing error', details: err);
+      });
+    } catch (e) {
+      Get.find<AppLogService>().warning('Failed to initialize receive_sharing_intent', details: e);
+    }
+  }
+
+  void _handleSharedFiles(List<SharedMediaFile> files) {
+    if (files.isEmpty) return;
+    final sharedTexts = files
+        .where((f) => f.path.isNotEmpty)
+        .map((f) => f.path)
+        .toList();
+    if (sharedTexts.isNotEmpty) {
+      final text = sharedTexts.join('\n');
+      textController.text = text;
+      inputText.value = text;
+      textController.selection = TextSelection.fromPosition(
+        TextPosition(offset: text.length),
+      );
+      if (Get.isRegistered<HomeController>()) {
+        Get.find<HomeController>().currentTab.value = 0;
+      }
+    }
   }
 
   Future<void> _initSpeech() async {
@@ -148,6 +196,7 @@ class ChatController extends GetxController {
 
   @override
   void onClose() {
+    _intentSub?.cancel();
     _scrollTimer?.cancel();
     if (_scrollListenerAttached) {
       scrollController.removeListener(_handleUserScroll);

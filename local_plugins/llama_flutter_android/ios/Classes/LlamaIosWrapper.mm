@@ -98,6 +98,8 @@ static std::string sanitizeUTF8(const char* str, size_t len) {
     ctx_params.n_threads       = nThreads;
     ctx_params.n_threads_batch = nThreads;
     ctx_params.n_batch         = 512;
+    ctx_params.type_k          = GGML_TYPE_Q4_0;
+    ctx_params.type_v          = GGML_TYPE_Q4_0;
 
     g_ctx = llama_init_from_model(g_model, ctx_params);
     if (!g_ctx) {

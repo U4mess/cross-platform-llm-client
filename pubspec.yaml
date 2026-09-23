@@ -40,6 +40,7 @@ dependencies:
   # Image Support
   image_picker: ^1.1.0
   share_plus: ^10.0.0
+  receive_sharing_intent: ^1.8.1
 
   # UI
   google_fonts: ^6.2.0
