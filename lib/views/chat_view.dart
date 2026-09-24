@@ -15,6 +15,8 @@ import '../utils/thought_parser.dart';
 import '../widgets/attachment_preview.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/thought_disclosure.dart';
+import '../widgets/tool_status_disclosure.dart';
+import '../utils/tool_parser.dart';
 
 // ── Apple-style color helpers ──
 Color _appleBlue(BuildContext c) => Theme.of(c).brightness == Brightness.dark
@@ -426,8 +428,12 @@ class ChatView extends GetView<ChatController> {
     final isImageGen = controller.imageGenTotal.value > 0;
     final clean = _cleanStream(text).trimLeft();
     final parts = splitThoughtTags(clean);
-    final answer = parts.answer.trimLeft();
-    final hasText = parts.hasThought || _hasPrintable(answer);
+    final rawAnswer = parts.answer.trimLeft();
+    final parsedTools = parseToolTags(rawAnswer);
+    final cleanAnswer = parsedTools.cleanText;
+    final hasActiveTools = controller.activeToolCalls.isNotEmpty;
+    final hasText =
+        parts.hasThought || _hasPrintable(cleanAnswer) || hasActiveTools;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
@@ -457,11 +463,13 @@ class ChatView extends GetView<ChatController> {
                     thought: parts.thought,
                     isThinking: parts.isThinking,
                     styleSheet: _thoughtMd(context, isDark)),
-              if (_hasPrintable(answer))
+              for (final tool in controller.activeToolCalls)
+                ToolStatusDisclosure(record: tool),
+              if (_hasPrintable(cleanAnswer))
                 Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
                   Expanded(
                       child: MarkdownBody(
-                          data: answer,
+                          data: cleanAnswer,
                           selectable: true,
                           styleSheet: _streamMd(context, isDark))),
                   _BlinkingCursor(color: Theme.of(context).hintColor),
@@ -665,6 +673,16 @@ class ChatView extends GetView<ChatController> {
                 child: ListView(
                   scrollDirection: Axis.horizontal,
                   children: [
+                    if (controller.containsSharedUrl) ...[
+                      ActionChip(
+                        avatar: const Text('🌐', style: TextStyle(fontSize: 13)),
+                        label: Text('Fetch & Summarize',
+                            style: GoogleFonts.inter(
+                                fontSize: 12, fontWeight: FontWeight.w600)),
+                        onPressed: () => controller.executeFetchAndSummarize(),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
                     ActionChip(
                       avatar: const Text('⚡', style: TextStyle(fontSize: 13)),
                       label: Text('Summarize',

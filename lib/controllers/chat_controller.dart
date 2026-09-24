@@ -27,6 +27,7 @@ import '../services/app_log_service.dart';
 import '../services/image_generation_notification_service.dart';
 import '../services/document_extractor_service.dart';
 import '../utils/thought_parser.dart';
+import '../widgets/tool_status_disclosure.dart';
 
 const int _visionImageMaxSide = 768;
 const int _visionImageJpegQuality = 72;
@@ -89,9 +90,20 @@ class ChatController extends GetxController {
 
   // Agent Mode
   final isAgentMode = false.obs;
+  final activeToolCalls = <ToolExecutionRecord>[].obs;
 
   // One-Tap Action Chips for Incoming Share Intent
   final hasSharedText = false.obs;
+
+  bool get containsSharedUrl {
+    final text = textController.text;
+    return RegExp(r'https?://[^\s]+').hasMatch(text);
+  }
+
+  String? get firstDetectedUrl {
+    final match = RegExp(r'https?://[^\s]+').firstMatch(textController.text);
+    return match?.group(0);
+  }
 
   final textController = TextEditingController();
   final scrollController = ScrollController();
@@ -166,6 +178,36 @@ class ChatController extends GetxController {
     inputText.value = textController.text;
     hasSharedText.value = false;
     sendMessage();
+  }
+
+  Future<void> executeFetchAndSummarize() async {
+    final url = firstDetectedUrl;
+    if (url == null) {
+      executeShareAction('Summarize this into 3 concise bullet points:\n\n');
+      return;
+    }
+
+    hasSharedText.value = false;
+    final original = textController.text.trim();
+    textController.text = 'Fetching content from $url…';
+    inputText.value = textController.text;
+    isLoading.value = true;
+
+    try {
+      final agentService = Get.find<AgentService>();
+      final content = await agentService.fetchPageContent(url);
+      isLoading.value = false;
+
+      textController.text =
+          'Summarize the following web page content into 3 concise bullet points:\n\nSource URL: $url\n\n$content';
+      inputText.value = textController.text;
+      await sendMessage();
+    } catch (e) {
+      isLoading.value = false;
+      textController.text = original;
+      inputText.value = original;
+      Get.snackbar('Fetch Failed', '$e', snackPosition: SnackPosition.BOTTOM);
+    }
   }
 
   Future<void> _initSpeech() async {
@@ -596,6 +638,7 @@ class ChatController extends GetxController {
     streamingAttachmentType.value =
         (imagePath != null || fileType == 'audio') ? fileType : null;
     streamingResponse.value = '';
+    activeToolCalls.clear();
     _followStreaming = true;
     _scrollToBottom(force: true);
 
@@ -782,9 +825,53 @@ class ChatController extends GetxController {
                 toolCallRegex.firstMatch(stepBuffer.toString());
             if (match != null) {
               final toolCallJson = match.group(1)?.trim() ?? '';
-              final toolResult =
-                  await agentService.executeToolCallJson(toolCallJson);
+              Map<String, dynamic> parsedArgs = {};
+              String toolName = 'tool';
+              String toolQuery = '';
+              try {
+                parsedArgs = jsonDecode(toolCallJson) as Map<String, dynamic>;
+                toolName = (parsedArgs['name'] ?? 'tool').toString();
+                toolQuery = (parsedArgs['query'] ??
+                        parsedArgs['url'] ??
+                        parsedArgs['expression'] ??
+                        '')
+                    .toString();
+              } catch (_) {}
+
+              final statusIndex = activeToolCalls.length;
+              activeToolCalls.add(ToolExecutionRecord(
+                toolName: toolName,
+                query: toolQuery,
+                state: ToolExecutionState.executing,
+              ));
+
+              String toolResult;
+              bool isError = false;
+              try {
+                toolResult =
+                    await agentService.executeToolCallJson(toolCallJson);
+                final lower = toolResult.toLowerCase();
+                if (lower.startsWith('error') ||
+                    lower.startsWith('failed to') ||
+                    lower.startsWith('search error') ||
+                    lower.startsWith('invalid tool')) {
+                  isError = true;
+                }
+              } catch (e) {
+                toolResult = e.toString();
+                isError = true;
+              }
               toolCallsCount++;
+
+              if (statusIndex < activeToolCalls.length) {
+                activeToolCalls[statusIndex] =
+                    activeToolCalls[statusIndex].copyWith(
+                  state: isError
+                      ? ToolExecutionState.error
+                      : ToolExecutionState.finished,
+                  snippet: toolResult,
+                );
+              }
 
               if (generationId != _generationSerial) return;
 
@@ -916,6 +1003,14 @@ class ChatController extends GetxController {
     isStreaming.value = false;
     streamingAttachmentType.value = null;
     streamingResponse.value = '';
+    for (var i = 0; i < activeToolCalls.length; i++) {
+      if (activeToolCalls[i].state == ToolExecutionState.executing) {
+        activeToolCalls[i] = activeToolCalls[i].copyWith(
+          state: ToolExecutionState.error,
+          snippet: 'Cancelled by user.',
+        );
+      }
+    }
     Get.find<ImageGenerationNotificationService>().cancel();
     imageGenStep.value = 0;
     imageGenTotal.value = 0;
@@ -1006,10 +1101,29 @@ class ChatController extends GetxController {
     final basePrompt = settings.effectiveSystemPromptForModel(
       modelName,
     );
+
+    final now = DateTime.now().toLocal();
+    const days = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
+    final dayOfWeek = days[now.weekday - 1];
+    final timestamp = now.toString().split('.')[0];
+    final dateGrounding =
+        'Current Date and Time: $timestamp ($dayOfWeek). Use this exact current timestamp to ground all time-relative reasoning, news queries, and schedules without guessing.';
+
+    var fullPrompt = '$basePrompt\n\n$dateGrounding';
+
     if (isAgentMode.value) {
-      return '$basePrompt\n\nTools available: <tool_call>{"name": "web_search", "query": "..."}</tool_call>, <tool_call>{"name": "calculate", "expression": "..."}</tool_call>, <tool_call>{"name": "read_clipboard"}</tool_call>. Output strictly the tag when calling a tool.';
+      fullPrompt +=
+          '\n\nTools available: <tool_call>{"name": "web_search", "query": "..."}</tool_call>, <tool_call>{"name": "fetch_page_content", "url": "..."}</tool_call>, <tool_call>{"name": "calculate", "expression": "..."}</tool_call>, <tool_call>{"name": "read_clipboard"}</tool_call>. Output strictly the tag when calling a tool.';
     }
-    return basePrompt;
+    return fullPrompt;
   }
 
   String _attachmentTypeForExtension(String extension) {

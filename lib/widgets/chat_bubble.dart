@@ -7,6 +7,8 @@ import '../utils/thought_parser.dart';
 import 'attachment_preview.dart';
 import 'image_viewer.dart';
 import 'thought_disclosure.dart';
+import 'tool_status_disclosure.dart';
+import '../utils/tool_parser.dart';
 
 class ChatBubble extends StatelessWidget {
   final ChatMessage message;
@@ -28,6 +30,9 @@ class ChatBubble extends StatelessWidget {
         ? const ThoughtParts(thought: '', answer: '', isThinking: false)
         : splitThoughtTags(_cleanAssistantText(visibleContent));
     final answerContent = isUser ? visibleContent : thoughtParts.answer.trim();
+    final parsedTools = !isUser ? parseToolTags(answerContent) : null;
+    final finalAnswer =
+        parsedTools != null ? parsedTools.cleanText : answerContent;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
@@ -88,6 +93,11 @@ class ChatBubble extends StatelessWidget {
                   styleSheet: _thoughtMarkdownStyle(context),
                 ),
 
+              // Tool status disclosure
+              if (!isUser && parsedTools != null && parsedTools.tools.isNotEmpty)
+                for (final tool in parsedTools.tools)
+                  ToolStatusDisclosure(record: tool),
+
               // Message content
               if (isUser)
                 SelectableText(
@@ -99,9 +109,9 @@ class ChatBubble extends StatelessWidget {
                     fontWeight: FontWeight.w400,
                   ),
                 )
-              else if (answerContent.isNotEmpty)
+              else if (finalAnswer.isNotEmpty)
                 MarkdownBody(
-                  data: answerContent,
+                  data: finalAnswer,
                   selectable: true,
                   styleSheet: _markdownStyle(context),
                 ),

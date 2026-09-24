@@ -223,6 +223,96 @@ class AgentService extends GetxService {
     }
   }
 
+  /// Fetches web page content, strips HTML/scripts, and returns clean text up to 1,500 chars.
+  Future<String> fetchPageContent(String url) async {
+    var cleanUrl = url.trim();
+    if (cleanUrl.isEmpty) {
+      return 'Error: Empty URL provided.';
+    }
+    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+      cleanUrl = 'https://$cleanUrl';
+    }
+
+    try {
+      final uri = Uri.parse(cleanUrl);
+      if (!uri.hasScheme || uri.host.isEmpty) {
+        return 'Error: Invalid URL format ($cleanUrl).';
+      }
+
+      final response = await http.get(
+        uri,
+        headers: {
+          'User-Agent':
+              'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+          'Accept':
+              'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+      ).timeout(const Duration(seconds: 12));
+
+      if (response.statusCode != 200) {
+        return 'Error: Unreachable page (HTTP ${response.statusCode}).';
+      }
+
+      var html = response.body;
+
+      // 1. Remove script tags and contents
+      html = html.replaceAll(
+          RegExp(r'<script\b[^>]*>[\s\S]*?<\/script>', caseSensitive: false),
+          ' ');
+      // 2. Remove style tags and contents
+      html = html.replaceAll(
+          RegExp(r'<style\b[^>]*>[\s\S]*?<\/style>', caseSensitive: false),
+          ' ');
+      // 3. Remove noscript tags and contents
+      html = html.replaceAll(
+          RegExp(r'<noscript\b[^>]*>[\s\S]*?<\/noscript>', caseSensitive: false),
+          ' ');
+      // 4. Remove comments
+      html = html.replaceAll(RegExp(r'<!--[\s\S]*?-->'), ' ');
+      // 5. Replace block closing tags with newlines
+      html = html.replaceAll(
+          RegExp(r'<\/(p|div|h[1-6]|li|tr|article|section)>',
+              caseSensitive: false),
+          '\n');
+      html = html.replaceAll(RegExp(r'<br\s*\/?>', caseSensitive: false), '\n');
+      // 6. Strip all remaining HTML tags
+      html = html.replaceAll(RegExp(r'<[^>]+>'), ' ');
+      // 7. Decode HTML entities
+      html = html
+          .replaceAll('&nbsp;', ' ')
+          .replaceAll('&amp;', '&')
+          .replaceAll('&lt;', '<')
+          .replaceAll('&gt;', '>')
+          .replaceAll('&quot;', '"')
+          .replaceAll('&#39;', "'")
+          .replaceAll('&apos;', "'");
+      // 8. Collapse redundant blank lines and spaces
+      final lines = html
+          .split('\n')
+          .map((line) => line.replaceAll(RegExp(r'[ \t]+'), ' ').trim())
+          .where((line) => line.isNotEmpty)
+          .toList();
+      var cleanText = lines.join('\n');
+
+      if (cleanText.isEmpty) {
+        return 'No readable text content found on page.';
+      }
+
+      // 9. Truncate to a safe 1,500 characters (~350 tokens)
+      if (cleanText.length > 1500) {
+        cleanText =
+            '${cleanText.substring(0, 1500)}\n\n[Content truncated to 1500 characters]';
+      }
+
+      return cleanText;
+    } catch (e) {
+      Get.find<AppLogService>().warning('AgentService fetch_page_content error',
+          details: e);
+      return 'Error: Page unreachable ($e)';
+    }
+  }
+
   /// Dispatches a tool execution by name and arguments
   Future<String> executeTool(String name, Map<String, dynamic> args) async {
     final normalized = name.toLowerCase().trim();
@@ -230,12 +320,20 @@ class AgentService extends GetxService {
       case 'web_search':
       case 'websearch':
       case 'search':
-        final query = (args['query'] ?? args['q'] ?? args['input'] ?? '').toString();
+        final query =
+            (args['query'] ?? args['q'] ?? args['input'] ?? '').toString();
         return await webSearch(query);
+      case 'fetch_page_content':
+      case 'fetchpagecontent':
+      case 'fetch_page':
+      case 'fetch':
+        final url = (args['url'] ?? args['link'] ?? args['input'] ?? '').toString();
+        return await fetchPageContent(url);
       case 'calculate':
       case 'calculator':
       case 'calc':
-        final expr = (args['expression'] ?? args['expr'] ?? args['input'] ?? '').toString();
+        final expr =
+            (args['expression'] ?? args['expr'] ?? args['input'] ?? '').toString();
         return calculate(expr);
       case 'read_clipboard':
       case 'readclipboard':
