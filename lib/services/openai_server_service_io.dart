@@ -13,7 +13,8 @@ import 'inference_service.dart';
 
 class OpenAiServerService {
   HttpServer? _server;
-  bool _busy = false;
+  final _InferenceLock _inferenceLock = _InferenceLock();
+  bool get isBusy => _inferenceLock.isLocked;
   String? _apiKey;
   void Function(String)? _onLog;
 
@@ -48,7 +49,7 @@ class OpenAiServerService {
     final server = _server;
     _server = null;
     await server?.close(force: true);
-    _busy = false;
+    _inferenceLock.clear();
     _onLog?.call('Server stopped');
   }
 
@@ -68,8 +69,16 @@ class OpenAiServerService {
       }
 
       final path = request.uri.path;
-      if (request.method == 'GET' && path == '/health') {
-        await _json(request, {'status': 'ok'});
+      if (request.method == 'GET' && (path == '/' || path.isEmpty || path == '/health')) {
+        final inference = Get.isRegistered<InferenceService>()
+            ? Get.find<InferenceService>()
+            : null;
+        await _json(request, {
+          'status': 'online',
+          'name': 'VaultLM Local Server',
+          'version': '1.0.8',
+          'active_model': inference?.loadedModelName.value ?? '',
+        });
         return;
       }
 
@@ -164,10 +173,6 @@ class OpenAiServerService {
           status: HttpStatus.badRequest);
       return;
     }
-    if (_busy) {
-      await _json(request, {'error': 'Model is busy'}, status: 429);
-      return;
-    }
 
     final parsed = await _parseChatRequest(body);
     if (parsed.error != null) {
@@ -176,20 +181,35 @@ class OpenAiServerService {
       return;
     }
 
-    final model = (body['model'] as String?)?.trim();
-    if (model != null &&
-        model.isNotEmpty &&
-        model != inference.loadedModelName.value) {
-      await _json(request, {'error': 'Model not found or not loaded'},
-          status: HttpStatus.notFound);
+    final rawModel = (body['model'] as String?)?.trim();
+    final effectiveModel = (rawModel != null && rawModel.isNotEmpty)
+        ? rawModel
+        : inference.loadedModelName.value;
+
+    final acquired = await _inferenceLock.acquire();
+    if (!acquired) {
+      await _json(
+        request,
+        {'error': 'Too Many Requests - inference engine busy'},
+        status: HttpStatus.tooManyRequests,
+      );
+      await parsed.cleanup();
       return;
     }
 
     final stream = body['stream'] == true;
-    _busy = true;
     try {
+      while (inference.isGenerating.value) {
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+
       if (stream) {
-        await _streamChatResponse(request, inference, parsed);
+        await _streamChatResponse(
+          request,
+          inference,
+          parsed,
+          modelName: effectiveModel,
+        );
       } else {
         final text = await inference.generate(
           prompt: parsed.prompt,
@@ -201,10 +221,12 @@ class OpenAiServerService {
           audioPath: parsed.audioPath,
         );
         await _json(
-            request, _chatResponse(inference.loadedModelName.value, text));
+          request,
+          _chatResponse(effectiveModel, text),
+        );
       }
     } finally {
-      _busy = false;
+      _inferenceLock.release();
       await parsed.cleanup();
     }
   }
@@ -218,10 +240,6 @@ class OpenAiServerService {
           status: HttpStatus.badRequest);
       return;
     }
-    if (_busy) {
-      await _json(request, {'error': 'Model is busy'}, status: 429);
-      return;
-    }
 
     final prompt = body['prompt'];
     if (prompt is! String || prompt.trim().isEmpty) {
@@ -230,11 +248,34 @@ class OpenAiServerService {
       return;
     }
 
+    final rawModel = (body['model'] as String?)?.trim();
+    final effectiveModel = (rawModel != null && rawModel.isNotEmpty)
+        ? rawModel
+        : inference.loadedModelName.value;
+
+    final acquired = await _inferenceLock.acquire();
+    if (!acquired) {
+      await _json(
+        request,
+        {'error': 'Too Many Requests - inference engine busy'},
+        status: HttpStatus.tooManyRequests,
+      );
+      return;
+    }
+
     final stream = body['stream'] == true;
-    _busy = true;
     try {
+      while (inference.isGenerating.value) {
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+
       if (stream) {
-        await _streamCompletionResponse(request, inference, prompt);
+        await _streamCompletionResponse(
+          request,
+          inference,
+          prompt,
+          modelName: effectiveModel,
+        );
       } else {
         final text = await inference.generate(
           prompt: prompt,
@@ -245,14 +286,14 @@ class OpenAiServerService {
           'id': 'cmpl-${_id()}',
           'object': 'text_completion',
           'created': DateTime.now().millisecondsSinceEpoch ~/ 1000,
-          'model': inference.loadedModelName.value,
+          'model': effectiveModel,
           'choices': [
             {'index': 0, 'text': text, 'finish_reason': 'stop'}
           ],
         });
       }
     } finally {
-      _busy = false;
+      _inferenceLock.release();
     }
   }
 
@@ -412,8 +453,9 @@ class OpenAiServerService {
   Future<void> _streamChatResponse(
     HttpRequest request,
     InferenceService inference,
-    _ParsedChatRequest parsed,
-  ) async {
+    _ParsedChatRequest parsed, {
+    String? modelName,
+  }) async {
     final response = request.response;
     _addCorsHeaders(response);
     response.statusCode = HttpStatus.ok;
@@ -422,6 +464,9 @@ class OpenAiServerService {
     response.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
     final id = 'chatcmpl-${_id()}';
     final created = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final reportedModel = (modelName != null && modelName.isNotEmpty)
+        ? modelName
+        : inference.loadedModelName.value;
     var emitted = false;
 
     void emit(String token) {
@@ -430,7 +475,7 @@ class OpenAiServerService {
         'id': id,
         'object': 'chat.completion.chunk',
         'created': created,
-        'model': inference.loadedModelName.value,
+        'model': reportedModel,
         'choices': [
           {
             'index': 0,
@@ -460,8 +505,9 @@ class OpenAiServerService {
   Future<void> _streamCompletionResponse(
     HttpRequest request,
     InferenceService inference,
-    String prompt,
-  ) async {
+    String prompt, {
+    String? modelName,
+  }) async {
     final response = request.response;
     _addCorsHeaders(response);
     response.statusCode = HttpStatus.ok;
@@ -470,6 +516,9 @@ class OpenAiServerService {
     response.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
     final id = 'cmpl-${_id()}';
     final created = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final reportedModel = (modelName != null && modelName.isNotEmpty)
+        ? modelName
+        : inference.loadedModelName.value;
     var emitted = false;
 
     void emit(String token) {
@@ -478,7 +527,7 @@ class OpenAiServerService {
             'id': id,
             'object': 'text_completion',
             'created': created,
-            'model': inference.loadedModelName.value,
+            'model': reportedModel,
             'choices': [
               {'index': 0, 'text': token, 'finish_reason': null}
             ],
@@ -542,11 +591,13 @@ class OpenAiServerService {
 
   void _addCorsHeaders(HttpResponse response) {
     response.headers.set(HttpHeaders.accessControlAllowOriginHeader, '*');
-    response.headers
-        .set(HttpHeaders.accessControlAllowMethodsHeader, 'GET,POST,OPTIONS');
+    response.headers.set(
+      HttpHeaders.accessControlAllowMethodsHeader,
+      'GET, POST, OPTIONS',
+    );
     response.headers.set(
       HttpHeaders.accessControlAllowHeadersHeader,
-      'Content-Type, Authorization',
+      'Authorization, Content-Type, Accept, Origin, User-Agent',
     );
   }
 
@@ -649,4 +700,55 @@ class _TempFileResult {
   _TempFileResult.error(this.error) : file = null;
 
   String get path => file!.path;
+}
+
+class _InferenceLock {
+  bool _isLocked = false;
+  final List<Completer<void>> _queue = [];
+  static const int maxWaitingQueueSize = 3;
+
+  bool get isLocked => _isLocked;
+  int get waitingCount => _queue.length;
+
+  Future<bool> acquire() async {
+    if (!_isLocked) {
+      _isLocked = true;
+      return true;
+    }
+
+    if (_queue.length >= maxWaitingQueueSize) {
+      return false;
+    }
+
+    final completer = Completer<void>();
+    _queue.add(completer);
+    try {
+      await completer.future;
+      return true;
+    } catch (_) {
+      _queue.remove(completer);
+      return false;
+    }
+  }
+
+  void release() {
+    if (_queue.isNotEmpty) {
+      final next = _queue.removeAt(0);
+      if (!next.isCompleted) {
+        next.complete();
+      }
+    } else {
+      _isLocked = false;
+    }
+  }
+
+  void clear() {
+    while (_queue.isNotEmpty) {
+      final next = _queue.removeAt(0);
+      if (!next.isCompleted) {
+        next.completeError(const HttpException('Server stopped'));
+      }
+    }
+    _isLocked = false;
+  }
 }
