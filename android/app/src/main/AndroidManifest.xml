@@ -60,6 +60,10 @@
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false" />
 
+        <meta-data
+            android:name="com.pravera.flutter_foreground_task.icon"
+            android:resource="@mipmap/ic_launcher" />
+
         <!-- Boot receiver to restart after reboot -->
         <receiver
             android:name=".BootReceiver"

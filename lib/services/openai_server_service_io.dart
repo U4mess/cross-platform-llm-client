@@ -469,7 +469,8 @@ class OpenAiServerService {
         : inference.loadedModelName.value;
     var emitted = false;
 
-    void emit(String token) {
+    void emitContent(String text) {
+      if (text.isEmpty) return;
       emitted = true;
       final payload = {
         'id': id,
@@ -479,13 +480,54 @@ class OpenAiServerService {
         'choices': [
           {
             'index': 0,
-            'delta': {'content': token},
+            'delta': {'content': text},
             'finish_reason': null,
           }
         ],
       };
       response.write('data: ${jsonEncode(payload)}\n\n');
     }
+
+    void emitReasoning(String text) {
+      if (text.isEmpty) return;
+      emitted = true;
+      final payload = {
+        'id': id,
+        'object': 'chat.completion.chunk',
+        'created': created,
+        'model': reportedModel,
+        'choices': [
+          {
+            'index': 0,
+            'delta': {'reasoning_content': text},
+            'finish_reason': null,
+          }
+        ],
+      };
+      response.write('data: ${jsonEncode(payload)}\n\n');
+    }
+
+    void emitFinish() {
+      final payload = {
+        'id': id,
+        'object': 'chat.completion.chunk',
+        'created': created,
+        'model': reportedModel,
+        'choices': [
+          {
+            'index': 0,
+            'delta': <String, dynamic>{},
+            'finish_reason': 'stop',
+          }
+        ],
+      };
+      response.write('data: ${jsonEncode(payload)}\n\n');
+    }
+
+    final parser = _ThinkingStreamParser(
+      onContent: emitContent,
+      onReasoning: emitReasoning,
+    );
 
     final result = await inference.generate(
       prompt: parsed.prompt,
@@ -495,9 +537,16 @@ class OpenAiServerService {
       source: 'server',
       imagePath: parsed.imagePath,
       audioPath: parsed.audioPath,
-      onToken: emit,
+      onToken: (token) => parser.feed(token),
     );
-    if (!emitted && result.isNotEmpty) emit(result);
+    parser.flush();
+
+    if (!emitted && result.isNotEmpty) {
+      parser.feed(result);
+      parser.flush();
+    }
+
+    emitFinish();
     response.write('data: [DONE]\n\n');
     await response.close();
   }
@@ -546,6 +595,40 @@ class OpenAiServerService {
   }
 
   Map<String, dynamic> _chatResponse(String model, String text) {
+    final thinkRegex = RegExp(r'<think>(.*?)</think>', dotAll: true);
+    final match = thinkRegex.firstMatch(text);
+    final Map<String, dynamic> message;
+
+    if (match != null) {
+      final reasoning = match.group(1) ?? '';
+      var remaining = text.substring(0, match.start) + text.substring(match.end);
+      if (remaining.startsWith('\n\n')) {
+        remaining = remaining.substring(2);
+      } else if (remaining.startsWith('\n')) {
+        remaining = remaining.substring(1);
+      }
+      message = {
+        'role': 'assistant',
+        'content': remaining,
+        'reasoning_content': reasoning,
+      };
+    } else if (text.contains('<think>')) {
+      final unclosedMatch =
+          RegExp(r'<think>(.*)', dotAll: true).firstMatch(text);
+      final reasoning = unclosedMatch?.group(1) ?? '';
+      final before = text.substring(0, unclosedMatch?.start ?? 0);
+      message = {
+        'role': 'assistant',
+        'content': before,
+        'reasoning_content': reasoning,
+      };
+    } else {
+      message = {
+        'role': 'assistant',
+        'content': text,
+      };
+    }
+
     return {
       'id': 'chatcmpl-${_id()}',
       'object': 'chat.completion',
@@ -554,7 +637,7 @@ class OpenAiServerService {
       'choices': [
         {
           'index': 0,
-          'message': {'role': 'assistant', 'content': text},
+          'message': message,
           'finish_reason': 'stop',
         }
       ],
@@ -750,5 +833,114 @@ class _InferenceLock {
       }
     }
     _isLocked = false;
+  }
+}
+
+class _ThinkingStreamParser {
+  final void Function(String text) onContent;
+  final void Function(String text) onReasoning;
+
+  bool _inThinking = false;
+  bool _thinkingDone = false;
+  String _buffer = '';
+
+  static const String _thinkOpen = '<think>';
+  static const String _thinkClose = '</think>';
+
+  _ThinkingStreamParser({
+    required this.onContent,
+    required this.onReasoning,
+  });
+
+  void feed(String token) {
+    if (token.isEmpty) return;
+    _buffer += token;
+    _process();
+  }
+
+  void _process() {
+    while (_buffer.isNotEmpty) {
+      if (!_inThinking && !_thinkingDone) {
+        final openIdx = _buffer.indexOf(_thinkOpen);
+        if (openIdx != -1) {
+          if (openIdx > 0) {
+            onContent(_buffer.substring(0, openIdx));
+          }
+          _inThinking = true;
+          _buffer = _buffer.substring(openIdx + _thinkOpen.length);
+          continue;
+        }
+
+        final partialLen = _matchingPrefixLength(_buffer, _thinkOpen);
+        if (partialLen > 0) {
+          final emitLen = _buffer.length - partialLen;
+          if (emitLen > 0) {
+            onContent(_buffer.substring(0, emitLen));
+            _buffer = _buffer.substring(emitLen);
+          }
+          break;
+        } else {
+          onContent(_buffer);
+          _buffer = '';
+          break;
+        }
+      } else if (_inThinking) {
+        final closeIdx = _buffer.indexOf(_thinkClose);
+        if (closeIdx != -1) {
+          if (closeIdx > 0) {
+            onReasoning(_buffer.substring(0, closeIdx));
+          }
+          _inThinking = false;
+          _thinkingDone = true;
+          var after = _buffer.substring(closeIdx + _thinkClose.length);
+          if (after.startsWith('\n\n')) {
+            after = after.substring(2);
+          } else if (after.startsWith('\n')) {
+            after = after.substring(1);
+          }
+          _buffer = after;
+          continue;
+        }
+
+        final partialLen = _matchingPrefixLength(_buffer, _thinkClose);
+        if (partialLen > 0) {
+          final emitLen = _buffer.length - partialLen;
+          if (emitLen > 0) {
+            onReasoning(_buffer.substring(0, emitLen));
+            _buffer = _buffer.substring(emitLen);
+          }
+          break;
+        } else {
+          onReasoning(_buffer);
+          _buffer = '';
+          break;
+        }
+      } else {
+        onContent(_buffer);
+        _buffer = '';
+        break;
+      }
+    }
+  }
+
+  void flush() {
+    if (_buffer.isNotEmpty) {
+      if (_inThinking) {
+        onReasoning(_buffer);
+      } else {
+        onContent(_buffer);
+      }
+      _buffer = '';
+    }
+  }
+
+  int _matchingPrefixLength(String text, String target) {
+    final maxLen = text.length < target.length ? text.length : target.length - 1;
+    for (var len = maxLen; len > 0; len--) {
+      if (text.endsWith(target.substring(0, len))) {
+        return len;
+      }
+    }
+    return 0;
   }
 }

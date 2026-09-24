@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:get/get.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -39,6 +40,10 @@ class ServerPersistenceService extends GetxService {
           channelDescription: 'Notification channel for VaultLM API Server',
           channelImportance: NotificationChannelImportance.LOW,
           priority: NotificationPriority.LOW,
+          iconData: const NotificationIcon(
+            metaDataName: 'com.pravera.flutter_foreground_task.icon',
+            backgroundColor: Colors.transparent,
+          ),
         ),
         iosNotificationOptions: const IOSNotificationOptions(
           showNotification: false,
