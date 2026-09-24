@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:get/get.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../controllers/server_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../core/constants.dart';
 import 'inference_service.dart';
@@ -60,6 +61,7 @@ class OpenAiServerService {
   }
 
   Future<void> _handle(HttpRequest request) async {
+    final stopwatch = Stopwatch()..start();
     try {
       _addCorsHeaders(request.response);
       if (request.method == 'OPTIONS') {
@@ -79,33 +81,38 @@ class OpenAiServerService {
           'version': '1.0.8',
           'active_model': inference?.loadedModelName.value ?? '',
         });
+        _log(request: request, statusCode: HttpStatus.ok, duration: stopwatch.elapsed);
         return;
       }
 
       if (path.startsWith('/v1/') && !_isAuthorized(request)) {
         await _json(request, {'error': 'Unauthorized'},
             status: HttpStatus.unauthorized);
+        _log(request: request, statusCode: HttpStatus.unauthorized, duration: stopwatch.elapsed);
         return;
       }
 
       if (request.method == 'GET' && path == '/v1/models') {
         await _handleModels(request);
+        _log(request: request, statusCode: HttpStatus.ok, duration: stopwatch.elapsed);
         return;
       }
       if (request.method == 'GET' && path == '/v1/server/capabilities') {
         await _handleCapabilities(request);
+        _log(request: request, statusCode: HttpStatus.ok, duration: stopwatch.elapsed);
         return;
       }
       if (request.method == 'POST' && path == '/v1/chat/completions') {
-        await _handleChatCompletions(request);
+        await _handleChatCompletions(request, stopwatch: stopwatch);
         return;
       }
       if (request.method == 'POST' && path == '/v1/completions') {
-        await _handleCompletions(request);
+        await _handleCompletions(request, stopwatch: stopwatch);
         return;
       }
 
       await _json(request, {'error': 'Not found'}, status: HttpStatus.notFound);
+      _log(request: request, statusCode: HttpStatus.notFound, duration: stopwatch.elapsed);
     } catch (error) {
       _onLog?.call('Request failed: $error');
       try {
@@ -117,6 +124,26 @@ class OpenAiServerService {
       } catch (_) {
         await request.response.close();
       }
+      _log(request: request, statusCode: HttpStatus.internalServerError, duration: stopwatch.elapsed);
+    }
+  }
+
+  void _log({
+    required HttpRequest request,
+    required int statusCode,
+    required Duration duration,
+    int tokenCount = 0,
+    double tokensPerSecond = 0.0,
+  }) {
+    if (Get.isRegistered<ServerController>()) {
+      Get.find<ServerController>().logRequest(
+        method: request.method,
+        path: request.uri.path,
+        statusCode: statusCode,
+        duration: duration,
+        tokenCount: tokenCount,
+        tokensPerSecond: tokensPerSecond,
+      );
     }
   }
 
@@ -164,13 +191,17 @@ class OpenAiServerService {
     });
   }
 
-  Future<void> _handleChatCompletions(HttpRequest request) async {
+  Future<void> _handleChatCompletions(
+    HttpRequest request, {
+    required Stopwatch stopwatch,
+  }) async {
     final body = await _readJson(request);
     final inference = Get.find<InferenceService>();
     final modelError = _localModelError(inference);
     if (modelError != null) {
       await _json(request, {'error': modelError},
           status: HttpStatus.badRequest);
+      _log(request: request, statusCode: HttpStatus.badRequest, duration: stopwatch.elapsed);
       return;
     }
 
@@ -178,6 +209,7 @@ class OpenAiServerService {
     if (parsed.error != null) {
       await _json(request, {'error': parsed.error},
           status: HttpStatus.badRequest);
+      _log(request: request, statusCode: HttpStatus.badRequest, duration: stopwatch.elapsed);
       return;
     }
 
@@ -194,23 +226,29 @@ class OpenAiServerService {
         status: HttpStatus.tooManyRequests,
       );
       await parsed.cleanup();
+      _log(request: request, statusCode: HttpStatus.tooManyRequests, duration: stopwatch.elapsed);
       return;
     }
 
     final stream = body['stream'] == true;
+    var tokenCount = 0;
     try {
       while (inference.isGenerating.value) {
         await Future.delayed(const Duration(milliseconds: 100));
       }
 
       if (stream) {
-        await _streamChatResponse(
+        tokenCount = await _streamChatResponse(
           request,
           inference,
           parsed,
           modelName: effectiveModel,
+          stopwatch: stopwatch,
         );
       } else {
+        if (Get.isRegistered<ServerController>()) {
+          Get.find<ServerController>().serverInferenceStatus.value = 'Streaming';
+        }
         final text = await inference.generate(
           prompt: parsed.prompt,
           systemPrompt: parsed.systemPrompt ??
@@ -219,25 +257,55 @@ class OpenAiServerService {
           source: 'server',
           imagePath: parsed.imagePath,
           audioPath: parsed.audioPath,
+          onToken: (token) {
+            tokenCount++;
+            final elapsedSeconds = stopwatch.elapsedMilliseconds / 1000.0;
+            if (elapsedSeconds > 0.05 && Get.isRegistered<ServerController>()) {
+              Get.find<ServerController>().currentTokensPerSec.value =
+                  tokenCount / elapsedSeconds;
+            }
+          },
         );
+        if (tokenCount == 0 && text.isNotEmpty) {
+          tokenCount = max(1, text.split(RegExp(r'\s+')).length);
+        }
         await _json(
           request,
           _chatResponse(effectiveModel, text),
         );
       }
+      final duration = stopwatch.elapsed;
+      final finalTps = duration.inMilliseconds > 50
+          ? (tokenCount / (duration.inMilliseconds / 1000.0))
+          : 0.0;
+      _log(
+        request: request,
+        statusCode: HttpStatus.ok,
+        duration: duration,
+        tokenCount: tokenCount,
+        tokensPerSecond: finalTps,
+      );
     } finally {
+      if (Get.isRegistered<ServerController>()) {
+        Get.find<ServerController>().currentTokensPerSec.value = 0.0;
+        Get.find<ServerController>().serverInferenceStatus.value = 'Idle';
+      }
       _inferenceLock.release();
       await parsed.cleanup();
     }
   }
 
-  Future<void> _handleCompletions(HttpRequest request) async {
+  Future<void> _handleCompletions(
+    HttpRequest request, {
+    required Stopwatch stopwatch,
+  }) async {
     final body = await _readJson(request);
     final inference = Get.find<InferenceService>();
     final modelError = _localModelError(inference);
     if (modelError != null) {
       await _json(request, {'error': modelError},
           status: HttpStatus.badRequest);
+      _log(request: request, statusCode: HttpStatus.badRequest, duration: stopwatch.elapsed);
       return;
     }
 
@@ -245,6 +313,7 @@ class OpenAiServerService {
     if (prompt is! String || prompt.trim().isEmpty) {
       await _json(request, {'error': 'prompt is required'},
           status: HttpStatus.badRequest);
+      _log(request: request, statusCode: HttpStatus.badRequest, duration: stopwatch.elapsed);
       return;
     }
 
@@ -260,28 +329,45 @@ class OpenAiServerService {
         {'error': 'Too Many Requests - inference engine busy'},
         status: HttpStatus.tooManyRequests,
       );
+      _log(request: request, statusCode: HttpStatus.tooManyRequests, duration: stopwatch.elapsed);
       return;
     }
 
     final stream = body['stream'] == true;
+    var tokenCount = 0;
     try {
       while (inference.isGenerating.value) {
         await Future.delayed(const Duration(milliseconds: 100));
       }
 
       if (stream) {
-        await _streamCompletionResponse(
+        tokenCount = await _streamCompletionResponse(
           request,
           inference,
           prompt,
           modelName: effectiveModel,
+          stopwatch: stopwatch,
         );
       } else {
+        if (Get.isRegistered<ServerController>()) {
+          Get.find<ServerController>().serverInferenceStatus.value = 'Streaming';
+        }
         final text = await inference.generate(
           prompt: prompt,
           systemPrompt: _defaultSystemPrompt(inference.loadedModelName.value),
           source: 'server',
+          onToken: (token) {
+            tokenCount++;
+            final elapsedSeconds = stopwatch.elapsedMilliseconds / 1000.0;
+            if (elapsedSeconds > 0.05 && Get.isRegistered<ServerController>()) {
+              Get.find<ServerController>().currentTokensPerSec.value =
+                  tokenCount / elapsedSeconds;
+            }
+          },
         );
+        if (tokenCount == 0 && text.isNotEmpty) {
+          tokenCount = max(1, text.split(RegExp(r'\s+')).length);
+        }
         await _json(request, {
           'id': 'cmpl-${_id()}',
           'object': 'text_completion',
@@ -292,7 +378,22 @@ class OpenAiServerService {
           ],
         });
       }
+      final duration = stopwatch.elapsed;
+      final finalTps = duration.inMilliseconds > 50
+          ? (tokenCount / (duration.inMilliseconds / 1000.0))
+          : 0.0;
+      _log(
+        request: request,
+        statusCode: HttpStatus.ok,
+        duration: duration,
+        tokenCount: tokenCount,
+        tokensPerSecond: finalTps,
+      );
     } finally {
+      if (Get.isRegistered<ServerController>()) {
+        Get.find<ServerController>().currentTokensPerSec.value = 0.0;
+        Get.find<ServerController>().serverInferenceStatus.value = 'Idle';
+      }
       _inferenceLock.release();
     }
   }
@@ -450,11 +551,12 @@ class OpenAiServerService {
     return kind == 'image' ? 'png' : 'wav';
   }
 
-  Future<void> _streamChatResponse(
+  Future<int> _streamChatResponse(
     HttpRequest request,
     InferenceService inference,
     _ParsedChatRequest parsed, {
     String? modelName,
+    required Stopwatch stopwatch,
   }) async {
     final response = request.response;
     _addCorsHeaders(response);
@@ -468,6 +570,7 @@ class OpenAiServerService {
         ? modelName
         : inference.loadedModelName.value;
     var emitted = false;
+    var tokenCount = 0;
 
     void emitContent(String text) {
       if (text.isEmpty) return;
@@ -529,6 +632,10 @@ class OpenAiServerService {
       onReasoning: emitReasoning,
     );
 
+    if (Get.isRegistered<ServerController>()) {
+      Get.find<ServerController>().serverInferenceStatus.value = 'Streaming';
+    }
+
     final result = await inference.generate(
       prompt: parsed.prompt,
       systemPrompt: parsed.systemPrompt ??
@@ -537,11 +644,20 @@ class OpenAiServerService {
       source: 'server',
       imagePath: parsed.imagePath,
       audioPath: parsed.audioPath,
-      onToken: (token) => parser.feed(token),
+      onToken: (token) {
+        tokenCount++;
+        final elapsedSeconds = stopwatch.elapsedMilliseconds / 1000.0;
+        if (elapsedSeconds > 0.05 && Get.isRegistered<ServerController>()) {
+          Get.find<ServerController>().currentTokensPerSec.value =
+              tokenCount / elapsedSeconds;
+        }
+        parser.feed(token);
+      },
     );
     parser.flush();
 
     if (!emitted && result.isNotEmpty) {
+      tokenCount++;
       parser.feed(result);
       parser.flush();
     }
@@ -549,13 +665,15 @@ class OpenAiServerService {
     emitFinish();
     response.write('data: [DONE]\n\n');
     await response.close();
+    return tokenCount;
   }
 
-  Future<void> _streamCompletionResponse(
+  Future<int> _streamCompletionResponse(
     HttpRequest request,
     InferenceService inference,
     String prompt, {
     String? modelName,
+    required Stopwatch stopwatch,
   }) async {
     final response = request.response;
     _addCorsHeaders(response);
@@ -569,6 +687,7 @@ class OpenAiServerService {
         ? modelName
         : inference.loadedModelName.value;
     var emitted = false;
+    var tokenCount = 0;
 
     void emit(String token) {
       emitted = true;
@@ -583,15 +702,31 @@ class OpenAiServerService {
           })}\n\n');
     }
 
+    if (Get.isRegistered<ServerController>()) {
+      Get.find<ServerController>().serverInferenceStatus.value = 'Streaming';
+    }
+
     final result = await inference.generate(
       prompt: prompt,
       systemPrompt: _defaultSystemPrompt(inference.loadedModelName.value),
       source: 'server',
-      onToken: emit,
+      onToken: (token) {
+        tokenCount++;
+        final elapsedSeconds = stopwatch.elapsedMilliseconds / 1000.0;
+        if (elapsedSeconds > 0.05 && Get.isRegistered<ServerController>()) {
+          Get.find<ServerController>().currentTokensPerSec.value =
+              tokenCount / elapsedSeconds;
+        }
+        emit(token);
+      },
     );
-    if (!emitted && result.isNotEmpty) emit(result);
+    if (!emitted && result.isNotEmpty) {
+      tokenCount++;
+      emit(result);
+    }
     response.write('data: [DONE]\n\n');
     await response.close();
+    return tokenCount;
   }
 
   Map<String, dynamic> _chatResponse(String model, String text) {

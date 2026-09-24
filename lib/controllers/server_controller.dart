@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
 import '../core/constants.dart';
+import '../models/server_log_entry.dart';
 import '../services/app_log_service.dart';
 import '../services/hive_service.dart';
 import '../services/inference_service.dart';
@@ -25,6 +26,11 @@ class ServerController extends GetxController {
 
   final useApiKey = false.obs;
   final apiKey = ''.obs;
+
+  final currentTokensPerSec = 0.0.obs;
+  final sessionTokens = 0.obs;
+  final serverInferenceStatus = 'Idle'.obs;
+  final requestLogs = <ServerLogEntry>[].obs;
 
   late final TextEditingController apiKeyCtrl;
 
@@ -105,6 +111,38 @@ class ServerController extends GetxController {
     isRunning.value = false;
     localUrl.value = null;
     serverStatus.value = 'Server stopped';
+    currentTokensPerSec.value = 0.0;
+    serverInferenceStatus.value = 'Idle';
+  }
+
+  void clearLogs() {
+    requestLogs.clear();
+  }
+
+  void logRequest({
+    required String method,
+    required String path,
+    required int statusCode,
+    required Duration duration,
+    int tokenCount = 0,
+    double tokensPerSecond = 0.0,
+  }) {
+    final entry = ServerLogEntry(
+      timestamp: DateTime.now(),
+      method: method,
+      path: path,
+      statusCode: statusCode,
+      duration: duration,
+      tokenCount: tokenCount,
+      tokensPerSecond: tokensPerSecond,
+    );
+    if (requestLogs.length >= 100) {
+      requestLogs.removeAt(0);
+    }
+    requestLogs.add(entry);
+    if (tokenCount > 0) {
+      sessionTokens.value += tokenCount;
+    }
   }
 
   Future<void> saveSettings() async {

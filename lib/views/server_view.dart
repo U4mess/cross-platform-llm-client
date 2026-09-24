@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../controllers/server_controller.dart';
 import '../core/colors.dart';
+import '../models/server_log_entry.dart';
 
 class ServerView extends GetView<ServerController> {
   const ServerView({super.key});
@@ -185,6 +186,189 @@ class ServerView extends GetView<ServerController> {
                               label: const Text('Test local')),
                         ])),
               ]),
+              const SizedBox(height: 12),
+              _sectionLabel(context, 'LIVE TELEMETRY'),
+              Row(
+                children: [
+                  Expanded(
+                    child: _groupedCard(isDark, children: [
+                      Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Inference Speed',
+                              style: GoogleFonts.inter(
+                                fontSize: 13,
+                                color: Theme.of(context).hintColor,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '${controller.currentTokensPerSec.value.toStringAsFixed(1)} t/s',
+                              style: GoogleFonts.inter(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Row(
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: controller.serverInferenceStatus.value == 'Streaming'
+                                        ? AppColors.success
+                                        : Theme.of(context).hintColor.withValues(alpha: 0.5),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  controller.serverInferenceStatus.value,
+                                  style: GoogleFonts.inter(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                    color: controller.serverInferenceStatus.value == 'Streaming'
+                                        ? AppColors.success
+                                        : Theme.of(context).hintColor,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ]),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _groupedCard(isDark, children: [
+                      Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Session Tokens',
+                              style: GoogleFonts.inter(
+                                fontSize: 13,
+                                color: Theme.of(context).hintColor,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '${controller.sessionTokens.value}',
+                              style: GoogleFonts.inter(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              'tokens cumulative',
+                              style: GoogleFonts.inter(
+                                fontSize: 12,
+                                color: Theme.of(context).hintColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ]),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _sectionLabel(context, 'REQUEST CONSOLE'),
+              Container(
+                height: 200,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF141416),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: isDark
+                        ? Colors.white.withValues(alpha: 0.08)
+                        : Colors.black.withValues(alpha: 0.08),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.04),
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(13)),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.terminal_rounded, size: 15, color: Colors.greenAccent),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Console Logs',
+                                style: GoogleFonts.inter(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                            ],
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 18, color: Colors.white60),
+                            tooltip: 'Clear logs',
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            onPressed: () => controller.clearLogs(),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: controller.requestLogs.isEmpty
+                          ? const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(12),
+                                child: Text(
+                                  'Waiting for requests... (curl or client connections will appear here)',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontFamily: 'monospace',
+                                    fontSize: 12,
+                                    color: Colors.white38,
+                                  ),
+                                ),
+                              ),
+                            )
+                          : ListView.builder(
+                              padding: const EdgeInsets.all(10),
+                              itemCount: controller.requestLogs.length,
+                              itemBuilder: (context, index) {
+                                final log = controller.requestLogs[index];
+                                return Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 2),
+                                  child: Text(
+                                    log.formattedLine,
+                                    style: const TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontSize: 12,
+                                      color: Colors.greenAccent,
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
               const SizedBox(height: 12),
               _sectionLabel(context, 'USAGE EXAMPLES'),
               _groupedCard(isDark, children: [
