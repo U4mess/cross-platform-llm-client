@@ -42,7 +42,8 @@ class OpenAiServerService {
     _onLog = onLog;
     _lastReachableAddress = await _reachableIpv4Address();
     _server = await HttpServer.bind(InternetAddress.anyIPv4, port);
-    _onLog?.call('Server listening on ${localUrl ?? 'http://localhost:$port'}');
+    final displayUrl = localUrl ?? 'http://localhost:$port';
+    _onLog?.call('Server listening on $displayUrl');
     unawaited(_serve(_server!));
   }
 

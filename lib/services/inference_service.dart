@@ -256,14 +256,19 @@ class InferenceService extends GetxService {
 
   /// Reloads the currently loaded model with updated settings (context size, KV quantization, etc.)
   Future<String> reloadModel() async {
-    final path = loadedModelPath.value;
-    if (path.isEmpty) return 'No model currently loaded.';
-    final name = loadedModelName.value;
-    final runtime = loadedModelRuntime.value;
+    final path = _hive.getSetting<String>(AppConstants.keyLocalModelPath) ?? '';
+    if (path.isEmpty || !isModelLoaded.value) return 'No model currently loaded.';
+    final name = loadedModelName.value.isNotEmpty
+        ? loadedModelName.value
+        : (_hive.getSetting<String>(AppConstants.keyLocalModelName) ?? '');
+    final runtime = loadedModelRuntime.value.isNotEmpty
+        ? loadedModelRuntime.value
+        : (_hive.getSetting<String>(AppConstants.keyLocalModelRuntime) ?? '');
     return await loadModel(
       path,
       modelName: name.isNotEmpty ? name : null,
       modelRuntime: runtime.isNotEmpty ? runtime : null,
+      enableLiteRtVision: isVisionLoaded.value,
     );
   }
 
