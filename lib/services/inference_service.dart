@@ -110,6 +110,18 @@ class InferenceService extends GetxService {
           ) ??
           AppConstants.defaultContextSize;
 
+      final kvQuantization = _hive.getSetting<String>(
+            AppConstants.keyKvQuantization,
+            defaultValue: AppConstants.defaultKvQuantization,
+          ) ??
+          AppConstants.defaultKvQuantization;
+
+      final contextShift = _hive.getSetting<bool>(
+            AppConstants.keyContextShift,
+            defaultValue: AppConstants.defaultContextShift,
+          ) ??
+          AppConstants.defaultContextShift;
+
       final finalContextSize =
           isLiteRt ? contextSize.clamp(512, 4096) : contextSize;
 
@@ -135,6 +147,8 @@ class InferenceService extends GetxService {
             contextChanged,
         markLiteRtGpuPending: shouldTryLiteRtGpu,
         enableLiteRtVision: enableLiteRtVision,
+        kvQuantization: kvQuantization,
+        contextShift: contextShift,
       );
 
       if (!result.success &&
@@ -238,6 +252,19 @@ class InferenceService extends GetxService {
     contextTokensUsed.value = 0;
     contextTokensTotal.value = 0;
     _sessionNativeRuntime = '';
+  }
+
+  /// Reloads the currently loaded model with updated settings (context size, KV quantization, etc.)
+  Future<String> reloadModel() async {
+    final path = loadedModelPath.value;
+    if (path.isEmpty) return 'No model currently loaded.';
+    final name = loadedModelName.value;
+    final runtime = loadedModelRuntime.value;
+    return await loadModel(
+      path,
+      modelName: name.isNotEmpty ? name : null,
+      modelRuntime: runtime.isNotEmpty ? runtime : null,
+    );
   }
 
   Future<String> generate({
@@ -424,6 +451,8 @@ class InferenceService extends GetxService {
     required bool clearLiteRtCache,
     required bool markLiteRtGpuPending,
     required bool enableLiteRtVision,
+    String kvQuantization = 'q8_0',
+    bool contextShift = true,
   }) async {
     var gpuLoadFailed = false;
     try {
@@ -440,6 +469,8 @@ class InferenceService extends GetxService {
         forceLiteRtCpu: forceLiteRtCpu,
         clearLiteRtCache: clearLiteRtCache,
         enableLiteRtVision: enableLiteRtVision,
+        kvQuantization: kvQuantization,
+        contextShift: contextShift,
         onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
       );
       if (result.success ||
@@ -461,6 +492,8 @@ class InferenceService extends GetxService {
         forceLiteRtCpu: true,
         clearLiteRtCache: true,
         enableLiteRtVision: enableLiteRtVision,
+        kvQuantization: kvQuantization,
+        contextShift: contextShift,
         onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
       );
     } catch (e) {
@@ -479,6 +512,8 @@ class InferenceService extends GetxService {
             forceLiteRtCpu: true,
             clearLiteRtCache: true,
             enableLiteRtVision: enableLiteRtVision,
+            kvQuantization: kvQuantization,
+            contextShift: contextShift,
             onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
           );
         } catch (cpuError) {

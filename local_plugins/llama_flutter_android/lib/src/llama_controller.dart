@@ -24,6 +24,8 @@ class LlamaController implements LlamaFlutterApi {
     int threads = 4,
     int contextSize = 2048,
     int? gpuLayers,
+    String? kvQuantization,
+    bool contextShift = true,
   }) async {
     if (_isLoading) throw StateError('Already loading');
     final loaded = await _safeIsModelLoaded();
@@ -36,6 +38,8 @@ class LlamaController implements LlamaFlutterApi {
         nThreads: threads,
         contextSize: contextSize,
         nGpuLayers: gpuLayers,
+        kvQuantization: kvQuantization,
+        contextShift: contextShift,
       ));
     } finally {
       _isLoading = false;

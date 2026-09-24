@@ -51,6 +51,8 @@ class InferenceEngine {
     bool forceLiteRtCpu = false,
     bool clearLiteRtCache = false,
     bool enableLiteRtVision = false,
+    String kvQuantization = 'q8_0',
+    bool contextShift = true,
     void Function(double)? onProgress,
   }) async {
     _disposed = false;
@@ -144,6 +146,8 @@ class InferenceEngine {
       threads: threads,
       contextSize: contextSize,
       gpuLayers: gpuLayers,
+      kvQuantization: kvQuantization,
+      contextShift: contextShift,
     );
     _hasLoadedModel = true;
 

@@ -66,7 +66,11 @@ data class ModelConfig (
    */
   val nGpuLayers: Long? = null,
   /** Absolute path to the vision projector file (`mmproj`) for VL models. */
-  val mmprojPath: String? = null
+  val mmprojPath: String? = null,
+  /** KV cache quantization type ('q8_0', 'q4_0', 'f16'). */
+  val kvQuantization: String? = null,
+  /** Whether context shifting (sliding window) is enabled. */
+  val contextShift: Boolean? = true
 )
  {
   companion object {
@@ -76,7 +80,9 @@ data class ModelConfig (
       val contextSize = pigeonVar_list[2] as Long
       val nGpuLayers = pigeonVar_list[3] as Long?
       val mmprojPath = pigeonVar_list[4] as String?
-      return ModelConfig(modelPath, nThreads, contextSize, nGpuLayers, mmprojPath)
+      val kvQuantization = if (pigeonVar_list.size > 5) pigeonVar_list[5] as String? else null
+      val contextShift = if (pigeonVar_list.size > 6) pigeonVar_list[6] as Boolean? ?: true else true
+      return ModelConfig(modelPath, nThreads, contextSize, nGpuLayers, mmprojPath, kvQuantization, contextShift)
     }
   }
   fun toList(): List<Any?> {
@@ -85,7 +91,9 @@ data class ModelConfig (
       nThreads,
       contextSize,
       nGpuLayers,
-      mmprojPath
+      mmprojPath,
+      kvQuantization,
+      contextShift
     )
   }
 }

@@ -147,6 +147,9 @@ class SettingsView extends GetView<SettingsController> {
                 ),
               ]),
               const SizedBox(height: 24),
+              _sectionLabel(context, 'INFERENCE & MEMORY'),
+              _buildInferenceMemoryCard(context, isDark),
+              const SizedBox(height: 24),
               _sectionLabel(context, 'MODEL PARAMETERS'),
               _buildLiteRtCard(context, isDark),
               const SizedBox(height: 10),
@@ -472,45 +475,51 @@ class SettingsView extends GetView<SettingsController> {
         icon: Icons.tag_rounded,
         warning: 'Your phone may crash with this value!',
       ),
-      _parameterDivider(isDark),
-      (() {
-        final inference = Get.find<InferenceService>();
-        final savedRuntime = Get.find<HiveService>()
-                .getSetting<String>(AppConstants.keyLocalModelRuntime) ??
-            '';
-        final isLiteRtActive = (inference.isModelLoaded.value &&
-                inference.loadedModelRuntime.value == 'litert') ||
-            (!inference.isModelLoaded.value &&
-                savedRuntime.toLowerCase() == 'litert');
-        final maxContext = isLiteRtActive ? 4096.0 : 8192.0;
-        final divisions = isLiteRtActive ? 7 : 15;
-        final currentValue =
-            controller.contextSize.value.toDouble().clamp(512.0, maxContext);
+    ]);
+  }
 
-        if (currentValue != controller.contextSize.value.toDouble()) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            controller.setContextSize(currentValue.toInt());
-          });
-        }
+  Widget _buildInferenceMemoryCard(BuildContext context, bool isDark) {
+    return Obx(() {
+      final inference = Get.find<InferenceService>();
+      final savedRuntime = Get.find<HiveService>()
+              .getSetting<String>(AppConstants.keyLocalModelRuntime) ??
+          '';
+      final isLiteRtActive = (inference.isModelLoaded.value &&
+              inference.loadedModelRuntime.value == 'litert') ||
+          (!inference.isModelLoaded.value &&
+              savedRuntime.toLowerCase() == 'litert');
+      final maxContext = isLiteRtActive ? 4096.0 : 16384.0;
+      final divisions = isLiteRtActive ? 7 : 31;
+      final currentValue =
+          controller.contextSize.value.toDouble().clamp(512.0, maxContext);
 
-        return Column(
+      if (currentValue != controller.contextSize.value.toDouble()) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          controller.setContextSize(currentValue.toInt());
+        });
+      }
+
+      return _appleGroupedCard(context, isDark, children: [
+        // ── 1. Context Length Slider & Presets ──
+        Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _modelParameterSlider(
               context,
               isDark,
-              label: 'Context Size',
+              label: 'Context Length',
               value: currentValue,
               min: 512,
               max: maxContext,
               divisions: divisions,
-              safeMax: Get.find<DeviceInfoService>().maxSafeContextSize.toDouble(),
+              safeMax:
+                  Get.find<DeviceInfoService>().maxSafeContextSize.toDouble(),
               onChanged: (v) => controller.setContextSize(v.toInt()),
-              displayValue: currentValue.toInt().toString(),
+              displayValue: '${currentValue.toInt()} tokens',
               icon: Icons.memory_rounded,
               warning: isLiteRtActive
                   ? 'Context capped at 4096 to prevent driver memory crash for LiteRT models.'
-                  : 'Context this large will eat all your RAM!',
+                  : 'Context lengths above 8192 require substantial device RAM!',
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -527,7 +536,7 @@ class SettingsView extends GetView<SettingsController> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    for (final preset in [2048, 4096, 8192]) ...[
+                    for (final preset in [2048, 4096, 8192, 16384]) ...[
                       ChoiceChip(
                         label: Text(
                           '$preset',
@@ -554,9 +563,168 @@ class SettingsView extends GetView<SettingsController> {
               ),
             ),
           ],
-        );
-      })(),
-    ]);
+        ),
+
+        _parameterDivider(isDark),
+
+        // ── 2. KV Cache Quantization Picker ──
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  _iconBox(const Color(0xFFFF9500), Icons.compress_rounded),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'KV Cache Quantization',
+                          style: GoogleFonts.inter(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w400,
+                            color: isDark ? Colors.white : Colors.black,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Compresses key-value memory to cut RAM footprint by up to 75%',
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            color: Theme.of(context).hintColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Column(
+                children: [
+                  for (final option in const [
+                    (
+                      value: 'q8_0',
+                      title: 'Q8_0 (Recommended - 50% RAM savings)',
+                      subtitle:
+                          'Balanced 50% RAM savings with near-lossless perplexity',
+                    ),
+                    (
+                      value: 'q4_0',
+                      title: 'Q4_0 (Max savings)',
+                      subtitle:
+                          'Aggressive RAM reduction (up to 75% savings)',
+                    ),
+                    (
+                      value: 'f16',
+                      title: 'FP16 (Full Precision)',
+                      subtitle:
+                          'Original 16-bit precision, highest memory consumption',
+                    ),
+                  ])
+                    InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () => controller.setKvQuantization(option.value),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 5, horizontal: 2),
+                        child: Row(
+                          children: [
+                            Radio<String>(
+                              value: option.value,
+                              groupValue: controller.kvQuantization.value,
+                              onChanged: (v) {
+                                if (v != null) {
+                                  controller.setKvQuantization(v);
+                                }
+                              },
+                              activeColor: isDark
+                                  ? const Color(0xFF0A84FF)
+                                  : AppColors.primary,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    option.title,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 13,
+                                      fontWeight: controller.kvQuantization.value ==
+                                              option.value
+                                          ? FontWeight.w600
+                                          : FontWeight.w400,
+                                      color: isDark ? Colors.white : Colors.black,
+                                    ),
+                                  ),
+                                  Text(
+                                    option.subtitle,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 11,
+                                      color: Theme.of(context).hintColor,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+
+        _parameterDivider(isDark),
+
+        // ── 3. Context Shift Toggle ──
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              _iconBox(const Color(0xFF34C759), Icons.auto_mode_rounded),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Context Shift',
+                      style: GoogleFonts.inter(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w400,
+                        color: isDark ? Colors.white : Colors.black,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Slides KV cache when context limit is reached instead of crashing',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: Theme.of(context).hintColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch.adaptive(
+                value: controller.contextShift.value,
+                onChanged: (val) => controller.setContextShift(val),
+                activeColor:
+                    isDark ? const Color(0xFF0A84FF) : AppColors.primary,
+              ),
+            ],
+          ),
+        ),
+      ]);
+    });
   }
 
   Widget _buildImageGenerationCard(BuildContext context, bool isDark) {

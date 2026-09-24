@@ -15,6 +15,8 @@ NS_ASSUME_NONNULL_BEGIN
                nThreads:(int)nThreads
             contextSize:(int)contextSize
              nGpuLayers:(int)nGpuLayers
+         kvQuantization:(nullable NSString*)kvQuantization
+           contextShift:(BOOL)contextShift
        progressCallback:(LlamaProgressCallback)progressCallback;
 
 /// Start text generation. Calls tokenCallback for each token synchronously (runs on caller thread).

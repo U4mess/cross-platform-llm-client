@@ -6,10 +6,12 @@
 #include <cstring>
 #include <fstream>
 #include <mutex>
+#include <algorithm>
 #include <android/log.h>
 #include "llama.cpp/include/llama.h"
 #define LOG_TAG "LlamaJNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 static llama_model* g_model = nullptr;
@@ -18,6 +20,7 @@ static const llama_vocab* g_vocab = nullptr;
 static llama_sampler* g_sampler = nullptr;
 static std::atomic<bool> g_stop_flag{false};
 static int g_n_past = 0;  // Track the number of tokens already in KV cache
+static bool g_context_shift = true;
 static std::mutex g_load_log_mutex;
 static std::string g_load_error;
 static bool g_capture_load_error = false;
@@ -210,11 +213,36 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadModel(
     JNIEnv* env, jobject thiz,
     jstring path, jlong n_threads, jlong ctx_size, jlong n_gpu_layers,
+    jstring kv_quantization, jboolean context_shift,
     jobject progress_callback) {
     
     if (!path) {
         throwLoadError(env, "GGUF model path is missing");
         return;
+    }
+
+    g_context_shift = (bool)context_shift;
+
+    enum ggml_type kv_type_k = GGML_TYPE_Q8_0;
+    enum ggml_type kv_type_v = GGML_TYPE_Q8_0;
+
+    if (kv_quantization != nullptr) {
+        const char* kv_str = env->GetStringUTFChars(kv_quantization, nullptr);
+        if (kv_str != nullptr) {
+            std::string kv_mode = kv_str;
+            std::transform(kv_mode.begin(), kv_mode.end(), kv_mode.begin(), ::tolower);
+            if (kv_mode.find("q4") != std::string::npos) {
+                kv_type_k = GGML_TYPE_Q4_0;
+                kv_type_v = GGML_TYPE_Q4_0;
+            } else if (kv_mode.find("f16") != std::string::npos || kv_mode.find("fp16") != std::string::npos) {
+                kv_type_k = GGML_TYPE_F16;
+                kv_type_v = GGML_TYPE_F16;
+            } else {
+                kv_type_k = GGML_TYPE_Q8_0;
+                kv_type_v = GGML_TYPE_Q8_0;
+            }
+            env->ReleaseStringUTFChars(kv_quantization, kv_str);
+        }
     }
 
     const char* model_path = env->GetStringUTFChars(path, nullptr);
@@ -280,12 +308,21 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
     // Memory optimization: reduce memory usage by limiting batch processing
     ctx_params.n_batch = 512;  // Process smaller batches to reduce memory spikes
 
-    // KV cache quantization: configure type_k and type_v to Q4_0 instead of FP16/F32 to cut RAM footprint
-    ctx_params.type_k = GGML_TYPE_Q4_0;
-    ctx_params.type_v = GGML_TYPE_Q4_0;
+    // KV cache quantization: default GGML_TYPE_Q8_0 with fallback to FP16
+    ctx_params.type_k = kv_type_k;
+    ctx_params.type_v = kv_type_v;
 
     // Create context (using new API)
+    LOGI("Creating context: n_ctx=%lld, type_k=%d, type_v=%d, context_shift=%d",
+         (long long)ctx_size, ctx_params.type_k, ctx_params.type_v, g_context_shift ? 1 : 0);
     g_ctx = llama_init_from_model(g_model, ctx_params);
+    if (!g_ctx && (ctx_params.type_k != GGML_TYPE_F16 || ctx_params.type_v != GGML_TYPE_F16)) {
+        LOGW("Failed to create context with KV quantization (%d, %d); falling back to FP16",
+             ctx_params.type_k, ctx_params.type_v);
+        ctx_params.type_k = GGML_TYPE_F16;
+        ctx_params.type_v = GGML_TYPE_F16;
+        g_ctx = llama_init_from_model(g_model, ctx_params);
+    }
     if (!g_ctx) {
         llama_model_free(g_model);
         g_model = nullptr;
@@ -391,19 +428,37 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
 
     const int n_ctx = llama_n_ctx(g_ctx);
 
+    // Context shifting: handle prompts exceeding maximum context window so they do not crash or abort
+    if (g_context_shift && (int)tokens.size() >= n_ctx) {
+        const int max_prompt_tokens = std::max(1, n_ctx - 64);
+        LOGW("Prompt token count (%zu) exceeds context size (%d); sliding prompt window to %d tokens",
+             tokens.size(), n_ctx, max_prompt_tokens);
+        const int excess = (int)tokens.size() - max_prompt_tokens;
+        tokens.erase(tokens.begin(), tokens.begin() + excess);
+        llama_memory_clear(llama_get_memory(g_ctx), true);
+        g_n_past = 0;
+    }
+
     // Check if the context will be exceeded and apply a sliding window for the KV cache
     if (g_n_past + (int)tokens.size() > n_ctx) {
-        const int n_discard = n_ctx / 4; // Discard the oldest 25% of the context
-        LOGI("Context is full, shifting KV cache by %d tokens", n_discard);
-
-        // Remove the oldest tokens from the sequence
-        llama_memory_seq_rm(llama_get_memory(g_ctx), 0, 0, n_discard);
-        
-        // Shift the remaining tokens
-        llama_memory_seq_add(llama_get_memory(g_ctx), 0, n_discard, g_n_past, -n_discard);
-
-        // Update the past tokens count
-        g_n_past -= n_discard;
+        if (g_context_shift) {
+            int n_needed = (g_n_past + (int)tokens.size()) - n_ctx;
+            int n_discard = std::max(n_needed, n_ctx / 4);
+            if (n_discard >= g_n_past) {
+                LOGI("Prompt requires clearing previous KV cache (g_n_past=%d, tokens=%zu, n_ctx=%d)",
+                     g_n_past, tokens.size(), n_ctx);
+                llama_memory_clear(llama_get_memory(g_ctx), true);
+                g_n_past = 0;
+            } else {
+                LOGI("Context is full, shifting KV cache by %d tokens", n_discard);
+                llama_memory_seq_rm(llama_get_memory(g_ctx), 0, 0, n_discard);
+                llama_memory_seq_add(llama_get_memory(g_ctx), 0, n_discard, g_n_past, -n_discard);
+                g_n_past -= n_discard;
+            }
+        } else {
+            LOGW("Context full and context shift disabled: g_n_past=%d, tokens=%zu, n_ctx=%d",
+                 g_n_past, tokens.size(), n_ctx);
+        }
     }
 
     // Process prompt in batches to handle long inputs
@@ -514,6 +569,20 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
     // Generation loop
     LOGI("Starting generation loop: max_tokens=%lld", max_tokens);
     for (int i = 0; i < max_tokens && !g_stop_flag; i++) {
+        // If g_n_past >= n_ctx, shift context window during generation so it does NOT crash or abort!
+        if (g_n_past >= n_ctx) {
+            if (g_context_shift) {
+                const int n_discard = std::max(1, n_ctx / 4);
+                LOGI("Generation reached context limit (%d), shifting KV cache by %d tokens", g_n_past, n_discard);
+                llama_memory_seq_rm(llama_get_memory(g_ctx), 0, 0, n_discard);
+                llama_memory_seq_add(llama_get_memory(g_ctx), 0, n_discard, g_n_past, -n_discard);
+                g_n_past -= n_discard;
+            } else {
+                LOGW("Generation reached context limit (%d) and context shift disabled; stopping generation", g_n_past);
+                break;
+            }
+        }
+
         // Sample next token
         LOGI("Sampling token %d, g_n_past=%d", i + 1, g_n_past);
         llama_token new_token_id = llama_sampler_sample(g_sampler, g_ctx, -1);

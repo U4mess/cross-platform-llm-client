@@ -55,7 +55,9 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
                     config.modelPath,
                     config.nThreads,
                     config.contextSize,
-                    config.nGpuLayers ?: 0L
+                    config.nGpuLayers ?: 0L,
+                    config.kvQuantization ?: "q8_0",
+                    config.contextShift ?: true
                 ) { progress ->
                     scope.launch {
                         withContext(Dispatchers.Main) {
@@ -421,6 +423,8 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
         nThreads: Long,
         contextSize: Long,
         nGpuLayers: Long,
+        kvQuantization: String,
+        contextShift: Boolean,
         progressCallback: (Double) -> Unit
     )
 

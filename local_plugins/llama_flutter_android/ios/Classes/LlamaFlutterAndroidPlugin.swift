@@ -36,6 +36,8 @@ public class LlamaFlutterAndroidPlugin: NSObject, FlutterPlugin, LlamaHostApi {
                         nThreads: Int32(config.nThreads),
                         contextSize: Int32(config.contextSize),
                         nGpuLayers: Int32(config.nGpuLayers ?? 99),
+                        kvQuantization: config.kvQuantization,
+                        contextShift: config.contextShift ?? true,
                         progressCallback: { [weak self] progress in
                             DispatchQueue.main.async {
                                 self?.flutterApi?.onLoadProgress(progress: progress) { _ in }

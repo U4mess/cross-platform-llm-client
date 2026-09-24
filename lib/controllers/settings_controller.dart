@@ -46,7 +46,9 @@ class SettingsController extends GetxController {
   final isLoadingNvidiaModels = false.obs;
   final temperature = 0.1.obs;
   final maxTokens = 512.obs;
-  final contextSize = 2048.obs;
+  final contextSize = AppConstants.defaultContextSize.obs;
+  final kvQuantization = AppConstants.defaultKvQuantization.obs;
+  final contextShift = AppConstants.defaultContextShift.obs;
   final liteRtPerformanceMode = AppConstants.defaultLiteRtPerformanceMode.obs;
   final imageSteps = 1.obs;
   final imageGenForceCpu = AppConstants.defaultImageGenForceCpu.obs;
@@ -192,6 +194,12 @@ class SettingsController extends GetxController {
     contextSize.value = _hive.getSetting(AppConstants.keyContextSize,
             defaultValue: AppConstants.defaultContextSize) ??
         AppConstants.defaultContextSize;
+    kvQuantization.value = _hive.getSetting(AppConstants.keyKvQuantization,
+            defaultValue: AppConstants.defaultKvQuantization) ??
+        AppConstants.defaultKvQuantization;
+    contextShift.value = _hive.getSetting(AppConstants.keyContextShift,
+            defaultValue: AppConstants.defaultContextShift) ??
+        AppConstants.defaultContextShift;
     liteRtPerformanceMode.value = _hive.getSetting(
           AppConstants.keyLiteRtPerformanceMode,
           defaultValue: AppConstants.defaultLiteRtPerformanceMode,
@@ -659,6 +667,37 @@ class SettingsController extends GetxController {
   Future<void> setContextSize(int value) async {
     contextSize.value = value;
     await _hive.setSetting(AppConstants.keyContextSize, value);
+    try {
+      final inference = Get.find<InferenceService>();
+      if (inference.isModelLoaded.value &&
+          inference.loadedModelRuntime.value != 'litert') {
+        await inference.reloadModel();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> setKvQuantization(String value) async {
+    kvQuantization.value = value;
+    await _hive.setSetting(AppConstants.keyKvQuantization, value);
+    try {
+      final inference = Get.find<InferenceService>();
+      if (inference.isModelLoaded.value &&
+          inference.loadedModelRuntime.value != 'litert') {
+        await inference.reloadModel();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> setContextShift(bool value) async {
+    contextShift.value = value;
+    await _hive.setSetting(AppConstants.keyContextShift, value);
+    try {
+      final inference = Get.find<InferenceService>();
+      if (inference.isModelLoaded.value &&
+          inference.loadedModelRuntime.value != 'litert') {
+        await inference.reloadModel();
+      }
+    } catch (_) {}
   }
 
   Future<void> setLiteRtPerformanceMode(String mode) async {

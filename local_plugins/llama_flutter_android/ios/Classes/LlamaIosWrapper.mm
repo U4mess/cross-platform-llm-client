@@ -17,6 +17,7 @@ static llama_sampler*      g_sampler  = nullptr;
 static std::atomic<bool>   g_stop_flag{false};
 static int                 g_n_past   = 0;
 static int                 g_system_prompt_length = 0;
+static bool                g_context_shift = true;
 
 // UTF-8 helpers (identical logic to jni_wrapper.cpp)
 static bool isValidUTF8(const char* str, size_t len) {
@@ -79,7 +80,28 @@ static std::string sanitizeUTF8(const char* str, size_t len) {
                nThreads:(int)nThreads
             contextSize:(int)contextSize
              nGpuLayers:(int)nGpuLayers
+         kvQuantization:(nullable NSString*)kvQuantization
+           contextShift:(BOOL)contextShift
        progressCallback:(LlamaProgressCallback)progressCallback {
+
+    g_context_shift = (bool)contextShift;
+
+    enum ggml_type kv_type_k = GGML_TYPE_Q8_0;
+    enum ggml_type kv_type_v = GGML_TYPE_Q8_0;
+
+    if (kvQuantization != nil) {
+        NSString* lower = [kvQuantization lowercaseString];
+        if ([lower containsString:@"q4"]) {
+            kv_type_k = GGML_TYPE_Q4_0;
+            kv_type_v = GGML_TYPE_Q4_0;
+        } else if ([lower containsString:@"f16"] || [lower containsString:@"fp16"]) {
+            kv_type_k = GGML_TYPE_F16;
+            kv_type_v = GGML_TYPE_F16;
+        } else {
+            kv_type_k = GGML_TYPE_Q8_0;
+            kv_type_v = GGML_TYPE_Q8_0;
+        }
+    }
 
     const char* model_path = [path UTF8String];
     LOGI("Loading model: %s", model_path);
@@ -98,10 +120,16 @@ static std::string sanitizeUTF8(const char* str, size_t len) {
     ctx_params.n_threads       = nThreads;
     ctx_params.n_threads_batch = nThreads;
     ctx_params.n_batch         = 512;
-    ctx_params.type_k          = GGML_TYPE_Q4_0;
-    ctx_params.type_v          = GGML_TYPE_Q4_0;
+    ctx_params.type_k          = kv_type_k;
+    ctx_params.type_v          = kv_type_v;
 
     g_ctx = llama_init_from_model(g_model, ctx_params);
+    if (!g_ctx && (ctx_params.type_k != GGML_TYPE_F16 || ctx_params.type_v != GGML_TYPE_F16)) {
+        LOGE("Failed to create context with KV quantization (%d), falling back to FP16", ctx_params.type_k);
+        ctx_params.type_k = GGML_TYPE_F16;
+        ctx_params.type_v = GGML_TYPE_F16;
+        g_ctx = llama_init_from_model(g_model, ctx_params);
+    }
     if (!g_ctx) {
         llama_model_free(g_model);
         g_model = nullptr;
@@ -165,13 +193,30 @@ static std::string sanitizeUTF8(const char* str, size_t len) {
 
     const int n_ctx = llama_n_ctx(g_ctx);
 
+    if (g_context_shift && (int)tokens.size() >= n_ctx) {
+        const int max_prompt_tokens = std::max(1, n_ctx - 64);
+        LOGI("Prompt exceeds max context size (%d > %d), applying sliding window", (int)tokens.size(), max_prompt_tokens);
+        const int excess = (int)tokens.size() - max_prompt_tokens;
+        tokens.erase(tokens.begin(), tokens.begin() + excess);
+        llama_memory_clear(llama_get_memory(g_ctx), true);
+        g_n_past = 0;
+    }
+
     // Sliding window KV cache (mirrors Android: discard oldest 25%)
     if (g_n_past + (int)tokens.size() > n_ctx) {
-        const int n_discard = n_ctx / 4;
-        LOGI("Context full, shifting KV cache by %d tokens", n_discard);
-        llama_memory_seq_rm(llama_get_memory(g_ctx), 0, 0, n_discard);
-        llama_memory_seq_add(llama_get_memory(g_ctx), 0, n_discard, -1, -n_discard);
-        g_n_past = std::max(0, g_n_past - n_discard);
+        if (g_context_shift) {
+            int n_needed = (g_n_past + (int)tokens.size()) - n_ctx;
+            int n_discard = std::max(n_needed, n_ctx / 4);
+            if (n_discard >= g_n_past) {
+                llama_memory_clear(llama_get_memory(g_ctx), true);
+                g_n_past = 0;
+            } else {
+                LOGI("Context full, shifting KV cache by %d tokens", n_discard);
+                llama_memory_seq_rm(llama_get_memory(g_ctx), 0, 0, n_discard);
+                llama_memory_seq_add(llama_get_memory(g_ctx), 0, n_discard, -1, -n_discard);
+                g_n_past = std::max(0, g_n_past - n_discard);
+            }
+        }
     }
 
     // Decode prompt in batches
@@ -251,6 +296,18 @@ static std::string sanitizeUTF8(const char* str, size_t len) {
     std::string partial_token;
 
     for (int i = 0; i < maxTokens && !g_stop_flag; i++) {
+        if (g_n_past >= n_ctx) {
+            if (g_context_shift) {
+                const int n_discard = std::max(1, n_ctx / 4);
+                LOGI("Generation reached context limit (%d), shifting KV cache by %d tokens", g_n_past, n_discard);
+                llama_memory_seq_rm(llama_get_memory(g_ctx), 0, 0, n_discard);
+                llama_memory_seq_add(llama_get_memory(g_ctx), 0, n_discard, -1, -n_discard);
+                g_n_past = std::max(0, g_n_past - n_discard);
+            } else {
+                break;
+            }
+        }
+
         llama_token token_id = llama_sampler_sample(g_sampler, g_ctx, -1);
 
         if (token_id == eos_token || llama_vocab_is_eog(g_vocab, token_id)) break;

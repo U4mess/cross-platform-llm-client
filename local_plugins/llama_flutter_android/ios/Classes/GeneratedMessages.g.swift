@@ -82,7 +82,9 @@ struct ModelConfig {
   /// Use [LlamaController.detectGpu] to get a device-appropriate value.
   /// Null or 0 = CPU only. 99 = full offload (clamped to model's layer count).
   var nGpuLayers: Int64? = nil
-
+  var mmprojPath: String? = nil
+  var kvQuantization: String? = nil
+  var contextShift: Bool? = true
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
   static func fromList(_ pigeonVar_list: [Any?]) -> ModelConfig? {
@@ -90,12 +92,18 @@ struct ModelConfig {
     let nThreads = pigeonVar_list[1] as! Int64
     let contextSize = pigeonVar_list[2] as! Int64
     let nGpuLayers: Int64? = nilOrValue(pigeonVar_list[3])
+    let mmprojPath: String? = pigeonVar_list.count > 4 ? nilOrValue(pigeonVar_list[4]) : nil
+    let kvQuantization: String? = pigeonVar_list.count > 5 ? nilOrValue(pigeonVar_list[5]) : nil
+    let contextShift: Bool? = pigeonVar_list.count > 6 ? (nilOrValue(pigeonVar_list[6]) ?? true) : true
 
     return ModelConfig(
       modelPath: modelPath,
       nThreads: nThreads,
       contextSize: contextSize,
-      nGpuLayers: nGpuLayers
+      nGpuLayers: nGpuLayers,
+      mmprojPath: mmprojPath,
+      kvQuantization: kvQuantization,
+      contextShift: contextShift
     )
   }
   func toList() -> [Any?] {
@@ -104,6 +112,9 @@ struct ModelConfig {
       nThreads,
       contextSize,
       nGpuLayers,
+      mmprojPath,
+      kvQuantization,
+      contextShift,
     ]
   }
 }

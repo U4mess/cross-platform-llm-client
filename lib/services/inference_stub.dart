@@ -30,6 +30,8 @@ class InferenceEngine {
     bool forceLiteRtCpu = true,
     bool clearLiteRtCache = false,
     bool enableLiteRtVision = false,
+    String kvQuantization = 'q8_0',
+    bool contextShift = true,
     void Function(double)? onProgress,
   }) async {
     return LoadResult(

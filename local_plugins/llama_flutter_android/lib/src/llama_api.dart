@@ -33,6 +33,8 @@ class ModelConfig {
     required this.contextSize,
     this.nGpuLayers,
     this.mmprojPath,
+    this.kvQuantization,
+    this.contextShift = true,
   });
 
   /// Absolute path to the `.gguf` model file on device storage.
@@ -52,6 +54,12 @@ class ModelConfig {
   /// Null or 0 = CPU only. 99 = full offload (clamped to model's layer count).
   int? nGpuLayers;
 
+  /// KV cache quantization type ('q8_0', 'q4_0', 'f16').
+  String? kvQuantization;
+
+  /// Whether context shifting (sliding window) is enabled.
+  bool contextShift;
+
   Object encode() {
     return <Object?>[
       modelPath,
@@ -59,6 +67,8 @@ class ModelConfig {
       contextSize,
       nGpuLayers,
       mmprojPath,
+      kvQuantization,
+      contextShift,
     ];
   }
 
@@ -70,6 +80,8 @@ class ModelConfig {
       contextSize: result[2]! as int,
       nGpuLayers: result[3] as int?,
       mmprojPath: result[4] as String?,
+      kvQuantization: result.length > 5 ? result[5] as String? : null,
+      contextShift: result.length > 6 ? (result[6] as bool? ?? true) : true,
     );
   }
 }
