@@ -1,7 +1,7 @@
 name: privatelm
 description: AI Chat — Local/Cloud LLM Assistant
 publish_to: "none"
-version: 1.0.8+8
+version: 1.0.8+11
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -53,6 +53,8 @@ dependencies:
   # Background / Boot Persistence
   flutter_background_service: ^5.0.5
   flutter_local_notifications: ^17.0.0
+  flutter_foreground_task: ^8.1.0
+  wakelock_plus: ^1.2.8
   file_picker: ^11.0.2
   flutter_inappwebview: ^6.1.5
   image: ^4.8.0

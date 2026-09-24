@@ -10,6 +10,7 @@ import '../services/app_log_service.dart';
 import '../services/hive_service.dart';
 import '../services/inference_service.dart';
 import '../services/openai_server_service.dart';
+import '../services/server_persistence_service.dart';
 
 class ServerController extends GetxController {
   final HiveService _hive = Get.find<HiveService>();
@@ -75,6 +76,16 @@ class ServerController extends GetxController {
       localUrl.value = _server.localUrl;
       isRunning.value = true;
       serverStatus.value = 'Server running';
+
+      if (Get.isRegistered<ServerPersistenceService>()) {
+        final uri = _server.localUrl != null ? Uri.tryParse(_server.localUrl!) : null;
+        final host = (uri?.host.isNotEmpty == true) ? uri!.host : 'localhost';
+        final serverPort = uri?.hasPort == true ? uri!.port : port;
+        await Get.find<ServerPersistenceService>().start(
+          host: host,
+          port: serverPort,
+        );
+      }
     } catch (e) {
       lastError.value = '$e';
       serverStatus.value = 'Server failed';
@@ -88,6 +99,9 @@ class ServerController extends GetxController {
   Future<void> stopServer() async {
     isStarting.value = false;
     await _server.stop();
+    if (Get.isRegistered<ServerPersistenceService>()) {
+      await Get.find<ServerPersistenceService>().stop();
+    }
     isRunning.value = false;
     localUrl.value = null;
     serverStatus.value = 'Server stopped';

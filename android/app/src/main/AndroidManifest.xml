@@ -12,6 +12,8 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
     <!-- Microphone for speech-to-text -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
 
@@ -52,6 +54,11 @@
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false"
             tools:replace="android:exported,android:foregroundServiceType" />
+
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
 
         <!-- Boot receiver to restart after reboot -->
         <receiver

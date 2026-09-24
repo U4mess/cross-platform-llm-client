@@ -25,6 +25,7 @@ import 'services/app_log_service.dart';
 import 'services/crash_reporting_service.dart';
 import 'services/image_generation_notification_service.dart';
 import 'services/agent_service.dart';
+import 'services/server_persistence_service.dart';
 import 'core/constants.dart';
 
 void main() {
@@ -100,6 +101,8 @@ void main() {
     final imageNotifications = Get.put(ImageGenerationNotificationService());
     await imageNotifications.init();
     await imageNotifications.configureBackgroundService();
+    final serverPersistence = Get.put(ServerPersistenceService());
+    await serverPersistence.init();
     Get.put(ServerController(), permanent: true);
     Get.put(ModelController());
 
