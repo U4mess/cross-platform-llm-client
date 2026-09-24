@@ -16,7 +16,7 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
 
     <application
-        android:label="PrivateLM"
+        android:label="VaultLM"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:largeHeap="true"
@@ -44,8 +44,6 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
-
-
 
         <service
             android:name="id.flutter.flutter_background_service.BackgroundService"
