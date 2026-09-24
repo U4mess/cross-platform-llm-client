@@ -177,14 +177,14 @@ class SettingsView extends GetView<SettingsController> {
                     Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('PrivateLM',
+                          Text('VaultLM',
                               style: GoogleFonts.inter(
                                   fontSize: 17, fontWeight: FontWeight.w600)),
                           const SizedBox(height: 2),
                           Text(
                               controller.appVersion.value.isEmpty
-                                  ? 'Version unavailable · by orailnoor'
-                                  : 'v${controller.appVersion.value} · by orailnoor',
+                                  ? 'Version unavailable · by U4mess'
+                                  : 'v${controller.appVersion.value} · by U4mess',
                               style: GoogleFonts.inter(
                                   fontSize: 13,
                                   color: Theme.of(context).hintColor)),
