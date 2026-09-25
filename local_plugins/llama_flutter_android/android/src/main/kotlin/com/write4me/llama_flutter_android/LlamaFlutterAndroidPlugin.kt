@@ -3,21 +3,32 @@ package com.write4me.llama_flutter_android
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import kotlinx.coroutines.*
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
     private lateinit var context: Context
     private lateinit var flutterApi: LlamaFlutterApi
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var generationJob: Job? = null
     private val isModelLoaded = AtomicBoolean(false)
+    private val isGenerating = AtomicBoolean(false)
     private val isStopping = AtomicBoolean(false)
     private var currentModelPath: String? = null
     private var nativeLoadError: Throwable? = null
+
+    private fun timestamp(): String {
+        return SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
+    }
 
     companion object {
         private const val TAG = "LlamaFlutterPlugin"
@@ -100,9 +111,16 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
             return
         }
 
+        if (!isGenerating.compareAndSet(false, true)) {
+            Log.w(TAG, "[${timestamp()}] Generate rejected: already generating")
+            callback(Result.failure(IllegalStateException("Already generating")))
+            return
+        }
+
         isStopping.set(false)
-        generationJob = scope.launch {
+        generationJob = scope.launch(Dispatchers.Default) {
             try {
+                Log.i(TAG, "[${timestamp()}] Send / nativeGenerate started")
                 nativeGenerate(
                     request.prompt,
                     request.maxTokens,
@@ -121,42 +139,45 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
                     request.seed ?: -1L,  // Use -1 for random seed
                     request.penalizeNewline
                 ) { token ->
-                    if (!isStopping.get()) {
-                        scope.launch {
-                            withContext(Dispatchers.Main) {
-                                if (token == "[DONE]") {
-                                    flutterApi.onDone { }
-                                } else if (token.startsWith("[ERROR]: ")) {
-                                    flutterApi.onError(token.removePrefix("[ERROR]: ")) { }
-                                } else {
-                                    flutterApi.onToken(token) { }
-                                }
+                    val isTerminal = token == "[DONE]" || token.startsWith("[ERROR]: ")
+                    val stopped = isStopping.get()
+                    if (!stopped || isTerminal) {
+                        mainHandler.post {
+                            if (token == "[DONE]") {
+                                Log.i(TAG, "[${timestamp()}] [DONE] callback dispatched to Flutter")
+                                flutterApi.onDone { }
+                            } else if (token.startsWith("[ERROR]: ")) {
+                                val err = token.removePrefix("[ERROR]: ")
+                                Log.e(TAG, "[${timestamp()}] [ERROR] callback dispatched to Flutter: $err")
+                                flutterApi.onError(err) { }
+                            } else {
+                                flutterApi.onToken(token) { }
                             }
                         }
                     }
                 }
 
                 withContext(Dispatchers.Main) {
+                    Log.i(TAG, "[${timestamp()}] nativeGenerate finished successfully")
                     callback(Result.success(Unit))
                 }
             } catch (e: Exception) {
-                if (!isStopping.get()) {
-                    scope.launch {
-                        withContext(Dispatchers.Main) {
-                            flutterApi.onError(e.message ?: "Generation failed") { result ->
-                                // Handle result if needed
-                            }
-                            callback(Result.failure(e))
-                        }
-                    }
+                Log.e(TAG, "[${timestamp()}] Generation exception: ${e.message}", e)
+                mainHandler.post {
+                    flutterApi.onError(e.message ?: "Generation failed") { }
                 }
+                withContext(Dispatchers.Main) {
+                    callback(Result.failure(e))
+                }
+            } finally {
+                isGenerating.set(false)
             }
         }
     }
 
     override fun stop(callback: (Result<Unit>) -> Unit) {
+        Log.i(TAG, "[${timestamp()}] Stop received from Flutter")
         isStopping.set(true)
-        generationJob?.cancel()
         if (nativeLoadError == null) {
             nativeStop()
         }
@@ -164,7 +185,8 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
     }
 
     override fun dispose(callback: (Result<Unit>) -> Unit) {
-        scope.launch {
+        Log.i(TAG, "[${timestamp()}] dispose() called")
+        scope.launch(Dispatchers.Default) {
             try {
                 stop { }
                 if (isModelLoaded.get()) {
@@ -198,9 +220,16 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
             return
         }
 
+        if (!isGenerating.compareAndSet(false, true)) {
+            Log.w(TAG, "[${timestamp()}] GenerateChat rejected: already generating")
+            callback(Result.failure(IllegalStateException("Already generating")))
+            return
+        }
+
         isStopping.set(false)
-        generationJob = scope.launch {
+        generationJob = scope.launch(Dispatchers.Default) {
             try {
+                Log.i(TAG, "[${timestamp()}] Send / nativeGenerateChat started")
                 // Format the chat messages using the template manager
                 val formattedPrompt = ChatTemplateManager.formatMessages(
                     request.messages.map { msg -> TemplateChatMessage(msg.role, msg.content) },
@@ -226,35 +255,38 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
                     request.seed ?: -1L,  // Use -1 for random seed
                     request.penalizeNewline
                 ) { token ->
-                    if (!isStopping.get()) {
-                        scope.launch {
-                            withContext(Dispatchers.Main) {
-                                if (token == "[DONE]") {
-                                    flutterApi.onDone { }
-                                } else if (token.startsWith("[ERROR]: ")) {
-                                    flutterApi.onError(token.removePrefix("[ERROR]: ")) { }
-                                } else {
-                                    flutterApi.onToken(token) { }
-                                }
+                    val isTerminal = token == "[DONE]" || token.startsWith("[ERROR]: ")
+                    val stopped = isStopping.get()
+                    if (!stopped || isTerminal) {
+                        mainHandler.post {
+                            if (token == "[DONE]") {
+                                Log.i(TAG, "[${timestamp()}] [DONE] callback dispatched to Flutter")
+                                flutterApi.onDone { }
+                            } else if (token.startsWith("[ERROR]: ")) {
+                                val err = token.removePrefix("[ERROR]: ")
+                                Log.e(TAG, "[${timestamp()}] [ERROR] callback dispatched to Flutter: $err")
+                                flutterApi.onError(err) { }
+                            } else {
+                                flutterApi.onToken(token) { }
                             }
                         }
                     }
                 }
 
                 withContext(Dispatchers.Main) {
+                    Log.i(TAG, "[${timestamp()}] nativeGenerateChat finished successfully")
                     callback(Result.success(Unit))
                 }
             } catch (e: Exception) {
-                if (!isStopping.get()) {
-                    scope.launch {
-                        withContext(Dispatchers.Main) {
-                            flutterApi.onError(e.message ?: "Generation failed") { result ->
-                                // Handle result if needed
-                            }
-                            callback(Result.failure(e))
-                        }
-                    }
+                Log.e(TAG, "[${timestamp()}] Generation exception: ${e.message}", e)
+                mainHandler.post {
+                    flutterApi.onError(e.message ?: "Generation failed") { }
                 }
+                withContext(Dispatchers.Main) {
+                    callback(Result.failure(e))
+                }
+            } finally {
+                isGenerating.set(false)
             }
         }
     }

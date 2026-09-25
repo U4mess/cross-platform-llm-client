@@ -400,7 +400,7 @@ class InferenceEngine {
     _subscription = stream.listen(
       (token) {
         if (tokenCount == 0) {
-          print('[Inference] ✓ FIRST TOKEN received! Prefill done.');
+          print('[Inference] [${DateTime.now().toIso8601String()}] ✓ FIRST TOKEN received! Prefill done.');
         }
         final clean = _sanitizeGemmaGarbage(token);
         if (clean.isEmpty) return;
@@ -409,16 +409,16 @@ class InferenceEngine {
         onToken?.call(clean);
         _idleTimer?.cancel();
         _idleTimer = Timer(const Duration(seconds: 5), () {
-          print('[Inference] Idle timeout — $tokenCount tokens');
+          print('[Inference] [${DateTime.now().toIso8601String()}] Idle timeout — $tokenCount tokens');
           finish(buffer.toString());
         });
       },
       onDone: () {
-        print('[Inference] Stream onDone — $tokenCount tokens total');
+        print('[Inference] [${DateTime.now().toIso8601String()}] Stream onDone — $tokenCount tokens total');
         finish(buffer.toString());
       },
       onError: (error) {
-        print('[Inference] Stream error: $error');
+        print('[Inference] [${DateTime.now().toIso8601String()}] Stream error: $error');
         finish('ERROR: Generation failed — $error');
       },
     );
@@ -637,6 +637,7 @@ class InferenceEngine {
 
   Future<void> stop() async {
     if (_disposed) return;
+    print('[Inference] [${DateTime.now().toIso8601String()}] Stop requested in InferenceEngine');
     _idleTimer?.cancel();
     final stopCallback = _onStop;
     _onStop = null;
@@ -649,6 +650,7 @@ class InferenceEngine {
     try {
       await _controller?.stop().timeout(const Duration(milliseconds: 800));
     } catch (_) {}
+    print('[Inference] [${DateTime.now().toIso8601String()}] Stop completed in InferenceEngine');
   }
 
   /// Reset any persistent conversation state so the next generation

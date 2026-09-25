@@ -82,7 +82,8 @@ class LlamaController implements LlamaFlutterApi {
     bool penalizeNewline = true,
   }) {
     if (_isGenerating) {
-      throw StateError('Already generating');
+      print('[${DateTime.now().toIso8601String()}] [LlamaController] Warning: Already generating, stopping previous before new generate');
+      stop();
     }
 
     _isGenerating = true;
@@ -113,9 +114,15 @@ class LlamaController implements LlamaFlutterApi {
 
   /// Stop current generation
   Future<void> stop() async {
-    if (!_isGenerating) return;
-    await _api.stop();
+    print('[${DateTime.now().toIso8601String()}] [LlamaController] stop() requested');
     _isGenerating = false;
+    try {
+      await _api.stop();
+    } finally {
+      await _tokenController?.close();
+      _tokenController = null;
+      print('[${DateTime.now().toIso8601String()}] [LlamaController] UI state reset (stop completed)');
+    }
   }
 
   /// Unload model and free resources
@@ -164,7 +171,8 @@ class LlamaController implements LlamaFlutterApi {
     bool penalizeNewline = true,
   }) {
     if (_isGenerating) {
-      throw StateError('Already generating');
+      print('[${DateTime.now().toIso8601String()}] [LlamaController] Warning: Already generating, stopping previous before new generateChat');
+      stop();
     }
 
     _isGenerating = true;
@@ -259,6 +267,7 @@ class LlamaController implements LlamaFlutterApi {
 
   @override
   void onDone() {
+    print('[${DateTime.now().toIso8601String()}] [LlamaController] onDone received -> UI state reset');
     _isGenerating = false;
     _tokenController?.close();
     _tokenController = null;
@@ -266,6 +275,7 @@ class LlamaController implements LlamaFlutterApi {
 
   @override
   void onError(String error) {
+    print('[${DateTime.now().toIso8601String()}] [LlamaController] onError received: $error -> UI state reset');
     _isGenerating = false;
     _tokenController?.addError(Exception(error));
     _tokenController?.close();

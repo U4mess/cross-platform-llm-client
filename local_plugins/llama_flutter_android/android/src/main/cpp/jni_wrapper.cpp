@@ -73,11 +73,28 @@ static llama_context* g_ctx = nullptr;
 static const llama_vocab* g_vocab = nullptr;
 static llama_sampler* g_sampler = nullptr;
 static std::atomic<bool> g_stop_flag{false};
-static int g_n_past = 0;  // Track the number of tokens already in KV cache
+static std::atomic<bool> g_is_generating{false};
+static std::atomic<int> g_n_past{0};  // Track the number of tokens already in KV cache
+static std::atomic<int> g_context_size{0};
 static bool g_context_shift = true;
 static std::mutex g_load_log_mutex;
 static std::string g_load_error;
 static bool g_capture_load_error = false;
+
+static std::string currentTimestamp() {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    struct tm tm_buf;
+    localtime_r(&ts.tv_sec, &tm_buf);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%02d:%02d:%02d.%03ld",
+             tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec, ts.tv_nsec / 1000000);
+    return std::string(buf);
+}
+
+static bool llama_abort_check(void* /*data*/) {
+    return g_stop_flag.load();
+}
 
 static void androidLlamaLog(ggml_log_level level, const char* text, void*) {
     if (!text) return;
@@ -279,6 +296,11 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
         env->GetJavaVM(&g_jvm);
     }
 
+    g_stop_flag.store(true);
+    for (int i = 0; i < 50 && g_is_generating.load(); i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
     std::lock_guard<std::mutex> lock(g_infer_mutex);
 
     // Free any existing model/context
@@ -295,7 +317,8 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
         g_model = nullptr;
     }
     g_vocab = nullptr;
-    g_n_past = 0;
+    g_n_past.store(0);
+    g_context_size.store(0);
 
     try {
         // 1. Call ggml_backend_load_all() to ensure the Vulkan driver registers the Adreno 830
@@ -411,8 +434,10 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
         }
 
         // Create context
-        LOGI("Creating context: n_ctx=%lld, type_k=%d, type_v=%d, context_shift=%d",
-             (long long)ctx_size, cparams.type_k, cparams.type_v, g_context_shift ? 1 : 0);
+        LOGI("[%s] Creating context: n_ctx=%lld, type_k=%d, type_v=%d, context_shift=%d",
+             currentTimestamp().c_str(), (long long)ctx_size, cparams.type_k, cparams.type_v, g_context_shift ? 1 : 0);
+        cparams.abort_callback = llama_abort_check;
+        cparams.abort_callback_data = nullptr;
         g_ctx = llama_init_from_model(g_model, cparams);
         if (!g_ctx && (cparams.type_k != GGML_TYPE_F16 || cparams.type_v != GGML_TYPE_F16)) {
             LOGW("Failed to create context with KV quantization (%d, %d); falling back to FP16",
@@ -428,6 +453,10 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
             return;
         }
 
+        llama_set_abort_callback(g_ctx, llama_abort_check, nullptr);
+        g_context_size.store(llama_n_ctx(g_ctx));
+        g_n_past.store(0);
+
         // Get vocab for tokenization
         g_vocab = llama_model_get_vocab(g_model);
         LOGI("Vocab initialized: %p", (void*)g_vocab);
@@ -442,7 +471,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
         }
         
         // Reset KV cache position counter for new model
-        g_n_past = 0;
+        g_n_past.store(0);
 
         // Report progress completion
         if (progress_callback) {
@@ -495,16 +524,44 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
     jlong mirostat, jdouble mirostat_tau, jdouble mirostat_eta,
     jlong seed, jboolean penalize_newline,
     jobject token_callback) {
-    
-    if (!g_model || !g_ctx || !g_vocab) {
-        jclass exception = env->FindClass("java/lang/IllegalStateException");
-        env->ThrowNew(exception, "Model not loaded");
+
+    const std::string ts_start = currentTimestamp();
+    LOGI("[%s] nativeGenerate called (max_tokens=%lld)", ts_start.c_str(), (long long)max_tokens);
+
+    if (g_is_generating.exchange(true)) {
+        LOGE("[%s] nativeGenerate rejected: generation already active!", currentTimestamp().c_str());
+        jclass callbackClass = env->GetObjectClass(token_callback);
+        jmethodID invokeMethod = env->GetMethodID(callbackClass, "invoke", "(Ljava/lang/Object;)Ljava/lang/Object;");
+        jstring err_str = env->NewStringUTF("[ERROR]: Already generating");
+        env->CallObjectMethod(token_callback, invokeMethod, err_str);
+        env->DeleteLocalRef(err_str);
+        env->DeleteLocalRef(callbackClass);
         return;
     }
 
-    if (!g_jvm) {
-        env->GetJavaVM(&g_jvm);
+    struct GenerationGuard {
+        ~GenerationGuard() {
+            g_is_generating.store(false);
+        }
+    } gen_guard;
+
+    std::lock_guard<std::mutex> lock(g_infer_mutex);
+
+    jclass callbackClass = env->GetObjectClass(token_callback);
+    jmethodID invokeMethod = env->GetMethodID(callbackClass, "invoke", "(Ljava/lang/Object;)Ljava/lang/Object;");
+
+    if (!g_model || !g_ctx || !g_vocab) {
+        LOGE("[%s] Model not loaded in nativeGenerate", currentTimestamp().c_str());
+        jstring err_str = env->NewStringUTF("[ERROR]: Model not loaded");
+        env->CallObjectMethod(token_callback, invokeMethod, err_str);
+        env->DeleteLocalRef(err_str);
+        env->DeleteLocalRef(callbackClass);
+        return;
     }
+
+    // Set background thread priority (nice +10) to avoid starving SurfaceFlinger
+    setpriority(PRIO_PROCESS, 0, 10);
+    g_stop_flag.store(false);
 
     const char* raw_prompt = env->GetStringUTFChars(prompt, nullptr);
     std::string prompt_str = raw_prompt ? raw_prompt : "";
@@ -512,294 +569,287 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
         env->ReleaseStringUTFChars(prompt, raw_prompt);
     }
 
-    jobject cb_ref = env->NewGlobalRef(token_callback);
-    g_stop_flag = false;
+    try {
+        const int prompt_len = (int)prompt_str.length();
+        LOGI("[%s] Tokenizing prompt (length: %d)", currentTimestamp().c_str(), prompt_len);
 
-    // Decouple inference from the UI thread: launch prompt evaluation and autoregressive decode
-    // loop in a detached background thread so the JNI call returns immediately to Flutter.
-    std::thread([=]() {
-        JvmAttachment jvm_att(g_jvm);
-        JNIEnv* t_env = jvm_att.env;
-        if (!t_env) {
-            LOGE("Worker thread failed to attach to JVM");
-            return;
+        std::string sanitized_prompt = sanitizeUTF8(prompt_str.c_str(), prompt_len);
+        const char* sanitized_cstr = sanitized_prompt.c_str();
+        const int sanitized_len = (int)sanitized_prompt.length();
+
+        const int n_prompt_tokens = -llama_tokenize(g_vocab, sanitized_cstr, sanitized_len, nullptr, 0, true, true);
+        LOGI("[%s] Token count: %d", currentTimestamp().c_str(), n_prompt_tokens);
+
+        if (n_prompt_tokens <= 0) {
+            throw std::runtime_error("Failed to tokenize prompt (got " + std::to_string(n_prompt_tokens) + " tokens)");
+        }
+        std::vector<llama_token> tokens(n_prompt_tokens);
+        const int actual_tokens = llama_tokenize(g_vocab, sanitized_cstr, sanitized_len, tokens.data(), tokens.size(), true, true);
+        if (actual_tokens < 0) {
+            throw std::runtime_error("Failed to tokenize prompt");
+        }
+        tokens.resize(actual_tokens);
+
+        const int n_ctx = llama_n_ctx(g_ctx);
+
+        // Context shifting: handle prompts exceeding maximum context window
+        if (g_context_shift && (int)tokens.size() >= n_ctx) {
+            const int max_prompt_tokens = std::max(1, n_ctx - 64);
+            LOGW("[%s] Prompt token count (%zu) exceeds context size (%d); sliding prompt window to %d tokens",
+                 currentTimestamp().c_str(), tokens.size(), n_ctx, max_prompt_tokens);
+            const int excess = (int)tokens.size() - max_prompt_tokens;
+            tokens.erase(tokens.begin(), tokens.begin() + excess);
+            llama_memory_clear(llama_get_memory(g_ctx), true);
+            g_n_past.store(0);
         }
 
-        // Prevent CPU starvation: set native thread priority to background (nice +10)
-        setpriority(PRIO_PROCESS, 0, 10);
-
-        std::lock_guard<std::mutex> lock(g_infer_mutex);
-        if (!g_model || !g_ctx || !g_vocab) {
-            LOGE("Model not loaded in worker thread");
-            jclass callbackClass = t_env->GetObjectClass(cb_ref);
-            jmethodID invokeMethod = t_env->GetMethodID(callbackClass, "invoke", "(Ljava/lang/Object;)Ljava/lang/Object;");
-            jstring err_str = t_env->NewStringUTF("[ERROR]: Model not loaded");
-            t_env->CallObjectMethod(cb_ref, invokeMethod, err_str);
-            t_env->DeleteLocalRef(err_str);
-            t_env->DeleteLocalRef(callbackClass);
-            t_env->DeleteGlobalRef(cb_ref);
-            return;
-        }
-
-        jclass callbackClass = t_env->GetObjectClass(cb_ref);
-        jmethodID invokeMethod = t_env->GetMethodID(callbackClass, "invoke", "(Ljava/lang/Object;)Ljava/lang/Object;");
-
-        try {
-            const int prompt_len = (int)prompt_str.length();
-            LOGI("Tokenizing prompt: '%s' (length: %d)", prompt_str.c_str(), prompt_len);
-            LOGI("Vocab pointer: %p, Model pointer: %p", (void*)g_vocab, (void*)g_model);
-
-            std::string sanitized_prompt = sanitizeUTF8(prompt_str.c_str(), prompt_len);
-            const char* sanitized_cstr = sanitized_prompt.c_str();
-            const int sanitized_len = (int)sanitized_prompt.length();
-
-            const int n_prompt_tokens = -llama_tokenize(g_vocab, sanitized_cstr, sanitized_len, nullptr, 0, true, true);
-            LOGI("Token count: %d", n_prompt_tokens);
-
-            if (n_prompt_tokens <= 0) {
-                throw std::runtime_error("Failed to tokenize prompt (got " + std::to_string(n_prompt_tokens) + " tokens)");
-            }
-            std::vector<llama_token> tokens(n_prompt_tokens);
-            const int actual_tokens = llama_tokenize(g_vocab, sanitized_cstr, sanitized_len, tokens.data(), tokens.size(), true, true);
-            if (actual_tokens < 0) {
-                throw std::runtime_error("Failed to tokenize prompt");
-            }
-            tokens.resize(actual_tokens);
-
-            const int n_ctx = llama_n_ctx(g_ctx);
-
-            // Context shifting: handle prompts exceeding maximum context window
-            if (g_context_shift && (int)tokens.size() >= n_ctx) {
-                const int max_prompt_tokens = std::max(1, n_ctx - 64);
-                LOGW("Prompt token count (%zu) exceeds context size (%d); sliding prompt window to %d tokens",
-                     tokens.size(), n_ctx, max_prompt_tokens);
-                const int excess = (int)tokens.size() - max_prompt_tokens;
-                tokens.erase(tokens.begin(), tokens.begin() + excess);
-                llama_memory_clear(llama_get_memory(g_ctx), true);
-                g_n_past = 0;
-            }
-
-            // Check if context will be exceeded and apply sliding window for KV cache
-            if (g_n_past + (int)tokens.size() > n_ctx) {
-                if (g_context_shift) {
-                    int n_needed = (g_n_past + (int)tokens.size()) - n_ctx;
-                    int n_discard = std::max(n_needed, n_ctx / 4);
-                    if (n_discard >= g_n_past) {
-                        LOGI("Prompt requires clearing previous KV cache (g_n_past=%d, tokens=%zu, n_ctx=%d)",
-                             g_n_past, tokens.size(), n_ctx);
-                        llama_memory_clear(llama_get_memory(g_ctx), true);
-                        g_n_past = 0;
-                    } else {
-                        LOGI("Context is full, shifting KV cache by %d tokens", n_discard);
-                        llama_memory_seq_rm(llama_get_memory(g_ctx), 0, 0, n_discard);
-                        llama_memory_seq_add(llama_get_memory(g_ctx), 0, n_discard, g_n_past, -n_discard);
-                        g_n_past -= n_discard;
-                    }
+        // Check if context will be exceeded and apply sliding window for KV cache
+        if (g_n_past.load() + (int)tokens.size() > n_ctx) {
+            if (g_context_shift) {
+                int n_needed = (g_n_past.load() + (int)tokens.size()) - n_ctx;
+                int n_discard = std::max(n_needed, n_ctx / 4);
+                if (n_discard >= g_n_past.load()) {
+                    LOGI("[%s] Prompt requires clearing previous KV cache (g_n_past=%d, tokens=%zu, n_ctx=%d)",
+                         currentTimestamp().c_str(), g_n_past.load(), tokens.size(), n_ctx);
+                    llama_memory_clear(llama_get_memory(g_ctx), true);
+                    g_n_past.store(0);
                 } else {
-                    LOGW("Context full and context shift disabled: g_n_past=%d, tokens=%zu, n_ctx=%d",
-                         g_n_past, tokens.size(), n_ctx);
+                    LOGI("[%s] Context is full, shifting KV cache by %d tokens", currentTimestamp().c_str(), n_discard);
+                    llama_memory_seq_rm(llama_get_memory(g_ctx), 0, 0, n_discard);
+                    llama_memory_seq_add(llama_get_memory(g_ctx), 0, n_discard, g_n_past.load(), -n_discard);
+                    g_n_past.fetch_sub(n_discard);
                 }
-            }
-
-            const int max_batch_size = 512;
-            int tokens_processed = 0;
-            ScopedBatch scoped_batch(max_batch_size, 0, 1);
-            llama_batch& batch = scoped_batch.batch;
-
-            LOGI("Context size: %d", llama_n_ctx(g_ctx));
-
-            while (tokens_processed < (int)tokens.size() && !g_stop_flag) {
-                batch.n_tokens = 0;
-                int batch_size = std::min((int)tokens.size() - tokens_processed, max_batch_size);
-
-                for (int i = 0; i < batch_size; i++) {
-                    batch.token[batch.n_tokens] = tokens[tokens_processed + i];
-                    batch.pos[batch.n_tokens] = g_n_past + tokens_processed + i;
-                    batch.n_seq_id[batch.n_tokens] = 1;
-                    batch.seq_id[batch.n_tokens][0] = 0;
-                    batch.logits[batch.n_tokens] = false;
-                    batch.n_tokens++;
-                }
-
-                // Ensure the last token of the final batch has logits enabled
-                if (tokens_processed + batch_size >= (int)tokens.size() && batch.n_tokens > 0) {
-                    batch.logits[batch.n_tokens - 1] = true;
-                }
-
-                LOGI("Decoding batch: g_n_past=%d, batch_size=%d", g_n_past + tokens_processed, batch.n_tokens);
-                int decode_result = llama_decode(g_ctx, batch);
-                if (decode_result != 0) {
-                    LOGE("❌ DECODE FAILED! Result code: %d", decode_result);
-                    throw std::runtime_error("Failed to decode prompt batch (code " + std::to_string(decode_result) + ")");
-                }
-                tokens_processed += batch_size;
-            }
-
-            if (g_stop_flag) {
-                LOGI("Generation stopped by user during prompt evaluation");
-                jstring done_str = t_env->NewStringUTF("[DONE]");
-                t_env->CallObjectMethod(cb_ref, invokeMethod, done_str);
-                t_env->DeleteLocalRef(done_str);
-                t_env->DeleteLocalRef(callbackClass);
-                t_env->DeleteGlobalRef(cb_ref);
-                return;
-            }
-
-            LOGI("✅ Decode successful! Processed %d total tokens", tokens_processed);
-            g_n_past += tokens.size();
-
-            // Create sampler chain with all parameters
-            if (g_sampler) {
-                llama_sampler_free(g_sampler);
-                g_sampler = nullptr;
-            }
-
-            uint32_t sampler_seed = (seed >= 0) ? static_cast<uint32_t>(seed) : static_cast<uint32_t>(time(nullptr));
-            llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
-            g_sampler = llama_sampler_chain_init(sparams);
-
-            if (repeat_penalty != 1.0f || frequency_penalty != 0.0f || presence_penalty != 0.0f) {
-                llama_sampler_chain_add(g_sampler, llama_sampler_init_penalties(
-                    repeat_last_n,
-                    repeat_penalty,
-                    frequency_penalty,
-                    presence_penalty
-                ));
-            }
-
-            llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(temperature));
-
-            if (mirostat == 1) {
-                llama_sampler_chain_add(g_sampler, llama_sampler_init_mirostat(
-                    llama_vocab_n_tokens(g_vocab),
-                    sampler_seed,
-                    mirostat_tau,
-                    mirostat_eta,
-                    100
-                ));
-            } else if (mirostat == 2) {
-                llama_sampler_chain_add(g_sampler, llama_sampler_init_mirostat_v2(
-                    sampler_seed,
-                    mirostat_tau,
-                    mirostat_eta
-                ));
             } else {
-                if (min_p > 0.0f && min_p < 1.0f) {
-                    llama_sampler_chain_add(g_sampler, llama_sampler_init_min_p(min_p, 1));
-                }
-                if (typical_p < 1.0f) {
-                    llama_sampler_chain_add(g_sampler, llama_sampler_init_typical(typical_p, 1));
-                }
-                if (top_k > 0) {
-                    llama_sampler_chain_add(g_sampler, llama_sampler_init_top_k(top_k));
-                }
-                if (top_p < 1.0f) {
-                    llama_sampler_chain_add(g_sampler, llama_sampler_init_top_p(top_p, 1));
-                }
+                LOGW("[%s] Context full and context shift disabled: g_n_past=%d, tokens=%zu, n_ctx=%d",
+                     currentTimestamp().c_str(), g_n_past.load(), tokens.size(), n_ctx);
             }
-
-            llama_sampler_chain_add(g_sampler, llama_sampler_init_dist(sampler_seed));
-
-            LOGI("Starting generation loop: max_tokens=%lld", (long long)max_tokens);
-            for (int i = 0; i < max_tokens && !g_stop_flag; i++) {
-                if (g_n_past >= n_ctx) {
-                    if (g_context_shift) {
-                        const int n_discard = std::max(1, n_ctx / 4);
-                        LOGI("Generation reached context limit (%d), shifting KV cache by %d tokens", g_n_past, n_discard);
-                        llama_memory_seq_rm(llama_get_memory(g_ctx), 0, 0, n_discard);
-                        llama_memory_seq_add(llama_get_memory(g_ctx), 0, n_discard, g_n_past, -n_discard);
-                        g_n_past -= n_discard;
-                    } else {
-                        LOGW("Generation reached context limit (%d) and context shift disabled; stopping generation", g_n_past);
-                        break;
-                    }
-                }
-
-                // Defensive null-check before calling sampler
-                float* logits = llama_get_logits_ith(g_ctx, -1);
-                if (!logits) {
-                    LOGE("Logits returned NULL! Skipping sample to prevent SIGSEGV");
-                    break;
-                }
-
-                llama_token new_token_id = llama_sampler_sample(g_sampler, g_ctx, -1);
-
-                // Break immediately on EOS
-                if (llama_vocab_is_eog(g_vocab, new_token_id)) {
-                    LOGI("EOS token detected, ending generation.");
-                    break;
-                }
-
-                char buffer[256];
-                int32_t length = llama_token_to_piece(g_vocab, new_token_id, buffer, sizeof(buffer), 0, true);
-                std::string piece;
-                if (length > 0) {
-                    piece = sanitizeUTF8(buffer, length);
-                }
-
-                jstring token_str = t_env->NewStringUTF(piece.c_str());
-                t_env->CallObjectMethod(cb_ref, invokeMethod, token_str);
-                t_env->DeleteLocalRef(token_str);
-
-                if (t_env->ExceptionCheck()) {
-                    t_env->ExceptionDescribe();
-                    t_env->ExceptionClear();
-                    LOGW("Exception detected in token callback; stopping generation");
-                    g_stop_flag = true;
-                    break;
-                }
-
-                // Autoregressive decode advances position:
-                // Verify n_past is incremented, batch.n_tokens = 1, batch.token[0] = sampled_token,
-                // batch.pos[0] = n_past, batch.logits[0] = true
-                g_n_past++;
-
-                batch.n_tokens = 1;
-                batch.token[0] = new_token_id;
-                batch.pos[0] = g_n_past;
-                batch.n_seq_id[0] = 1;
-                batch.seq_id[0][0] = 0;
-                batch.logits[0] = true;
-
-                int decode_res = llama_decode(g_ctx, batch);
-                if (decode_res != 0) {
-                    LOGE("Failed to decode after sampling token %d (res=%d)", i + 1, decode_res);
-                    break;
-                }
-            }
-            LOGI("Generation loop finished.");
-
-            jstring done_str = t_env->NewStringUTF("[DONE]");
-            t_env->CallObjectMethod(cb_ref, invokeMethod, done_str);
-            t_env->DeleteLocalRef(done_str);
-
-        } catch (const std::exception& e) {
-            LOGE("Native inference failed: %s", e.what());
-            jstring err_str = t_env->NewStringUTF((std::string("[ERROR]: ") + e.what()).c_str());
-            t_env->CallObjectMethod(cb_ref, invokeMethod, err_str);
-            t_env->DeleteLocalRef(err_str);
-        } catch (...) {
-            LOGE("Native inference failed with unknown error");
-            jstring err_str = t_env->NewStringUTF("[ERROR]: Unknown native error");
-            t_env->CallObjectMethod(cb_ref, invokeMethod, err_str);
-            t_env->DeleteLocalRef(err_str);
         }
 
-        t_env->DeleteLocalRef(callbackClass);
-        t_env->DeleteGlobalRef(cb_ref);
-    }).detach();
+        const int max_batch_size = 512;
+        int tokens_processed = 0;
+        ScopedBatch scoped_batch(max_batch_size, 0, 1);
+        llama_batch& batch = scoped_batch.batch;
+
+        LOGI("[%s] Prompt decode start: %zu tokens", currentTimestamp().c_str(), tokens.size());
+
+        while (tokens_processed < (int)tokens.size() && !g_stop_flag.load()) {
+            batch.n_tokens = 0;
+            int batch_size = std::min((int)tokens.size() - tokens_processed, max_batch_size);
+
+            for (int i = 0; i < batch_size; i++) {
+                batch.token[batch.n_tokens] = tokens[tokens_processed + i];
+                batch.pos[batch.n_tokens] = g_n_past.load() + tokens_processed + i;
+                batch.n_seq_id[batch.n_tokens] = 1;
+                batch.seq_id[batch.n_tokens][0] = 0;
+                batch.logits[batch.n_tokens] = false;
+                batch.n_tokens++;
+            }
+
+            // Ensure the last token of the final batch has logits enabled
+            if (tokens_processed + batch_size >= (int)tokens.size() && batch.n_tokens > 0) {
+                batch.logits[batch.n_tokens - 1] = true;
+            }
+
+            LOGI("[%s] Decoding prompt batch: g_n_past=%d, batch_size=%d",
+                 currentTimestamp().c_str(), g_n_past.load() + tokens_processed, batch.n_tokens);
+            int decode_result = llama_decode(g_ctx, batch);
+            if (decode_result != 0) {
+                if (g_stop_flag.load() || decode_result == 2) {
+                    LOGI("[%s] Prompt decode aborted by stop signal", currentTimestamp().c_str());
+                    break;
+                }
+                LOGE("❌ DECODE FAILED! Result code: %d", decode_result);
+                throw std::runtime_error("Failed to decode prompt batch (code " + std::to_string(decode_result) + ")");
+            }
+            tokens_processed += batch_size;
+        }
+
+        LOGI("[%s] Prompt decode end: %d tokens processed", currentTimestamp().c_str(), tokens_processed);
+
+        if (g_stop_flag.load()) {
+            LOGI("[%s] Stop observed after prompt decode -> sending [DONE]", currentTimestamp().c_str());
+            jstring done_str = env->NewStringUTF("[DONE]");
+            env->CallObjectMethod(token_callback, invokeMethod, done_str);
+            env->DeleteLocalRef(done_str);
+            env->DeleteLocalRef(callbackClass);
+            return;
+        }
+
+        LOGI("[%s] ✅ Prompt decode successful! Total tokens: %d", currentTimestamp().c_str(), tokens_processed);
+        g_n_past.fetch_add(tokens.size());
+
+        // Create sampler chain with all parameters
+        if (g_sampler) {
+            llama_sampler_free(g_sampler);
+            g_sampler = nullptr;
+        }
+
+        uint32_t sampler_seed = (seed >= 0) ? static_cast<uint32_t>(seed) : static_cast<uint32_t>(time(nullptr));
+        llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
+        g_sampler = llama_sampler_chain_init(sparams);
+
+        if (repeat_penalty != 1.0f || frequency_penalty != 0.0f || presence_penalty != 0.0f) {
+            llama_sampler_chain_add(g_sampler, llama_sampler_init_penalties(
+                repeat_last_n,
+                repeat_penalty,
+                frequency_penalty,
+                presence_penalty
+            ));
+        }
+
+        llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(temperature));
+
+        if (mirostat == 1) {
+            llama_sampler_chain_add(g_sampler, llama_sampler_init_mirostat(
+                llama_vocab_n_tokens(g_vocab),
+                sampler_seed,
+                mirostat_tau,
+                mirostat_eta,
+                100
+            ));
+        } else if (mirostat == 2) {
+            llama_sampler_chain_add(g_sampler, llama_sampler_init_mirostat_v2(
+                sampler_seed,
+                mirostat_tau,
+                mirostat_eta
+            ));
+        } else {
+            if (min_p > 0.0f && min_p < 1.0f) {
+                llama_sampler_chain_add(g_sampler, llama_sampler_init_min_p(min_p, 1));
+            }
+            if (typical_p < 1.0f) {
+                llama_sampler_chain_add(g_sampler, llama_sampler_init_typical(typical_p, 1));
+            }
+            if (top_k > 0) {
+                llama_sampler_chain_add(g_sampler, llama_sampler_init_top_k(top_k));
+            }
+            if (top_p < 1.0f) {
+                llama_sampler_chain_add(g_sampler, llama_sampler_init_top_p(top_p, 1));
+            }
+        }
+
+        llama_sampler_chain_add(g_sampler, llama_sampler_init_dist(sampler_seed));
+
+        LOGI("[%s] Starting generation loop: max_tokens=%lld", currentTimestamp().c_str(), (long long)max_tokens);
+        bool first_token = true;
+        for (int i = 0; i < max_tokens && !g_stop_flag.load(); i++) {
+            if (g_n_past.load() >= n_ctx) {
+                if (g_context_shift) {
+                    const int n_discard = std::max(1, n_ctx / 4);
+                    LOGI("[%s] Generation reached context limit (%d), shifting KV cache by %d tokens",
+                         currentTimestamp().c_str(), g_n_past.load(), n_discard);
+                    llama_memory_seq_rm(llama_get_memory(g_ctx), 0, 0, n_discard);
+                    llama_memory_seq_add(llama_get_memory(g_ctx), 0, n_discard, g_n_past.load(), -n_discard);
+                    g_n_past.fetch_sub(n_discard);
+                } else {
+                    LOGW("[%s] Generation reached context limit (%d) and context shift disabled; stopping",
+                         currentTimestamp().c_str(), g_n_past.load());
+                    break;
+                }
+            }
+
+            // Defensive null-check before calling sampler
+            float* logits = llama_get_logits_ith(g_ctx, -1);
+            if (!logits) {
+                LOGE("[%s] Logits returned NULL! Skipping sample to prevent crash", currentTimestamp().c_str());
+                break;
+            }
+
+            llama_token new_token_id = llama_sampler_sample(g_sampler, g_ctx, -1);
+
+            if (first_token) {
+                LOGI("[%s] First token sampled (token_id=%d)", currentTimestamp().c_str(), new_token_id);
+                first_token = false;
+            }
+
+            // Break immediately on EOS
+            if (llama_vocab_is_eog(g_vocab, new_token_id)) {
+                LOGI("[%s] EOS token detected, ending generation.", currentTimestamp().c_str());
+                break;
+            }
+
+            char buffer[256];
+            int32_t length = llama_token_to_piece(g_vocab, new_token_id, buffer, sizeof(buffer), 0, true);
+            std::string piece;
+            if (length > 0) {
+                piece = sanitizeUTF8(buffer, length);
+            }
+
+            jstring token_str = env->NewStringUTF(piece.c_str());
+            env->CallObjectMethod(token_callback, invokeMethod, token_str);
+            env->DeleteLocalRef(token_str);
+
+            if (env->ExceptionCheck()) {
+                env->ExceptionDescribe();
+                env->ExceptionClear();
+                LOGW("[%s] Exception detected in token callback; stopping generation", currentTimestamp().c_str());
+                g_stop_flag.store(true);
+                break;
+            }
+
+            if (g_stop_flag.load()) {
+                LOGI("[%s] Cancellation observed in loop", currentTimestamp().c_str());
+                break;
+            }
+
+            // Autoregressive decode advances position:
+            // Place next token at g_n_past, decode, then increment g_n_past
+            batch.n_tokens = 1;
+            batch.token[0] = new_token_id;
+            batch.pos[0] = g_n_past.load();
+            batch.n_seq_id[0] = 1;
+            batch.seq_id[0][0] = 0;
+            batch.logits[0] = true;
+
+            int decode_res = llama_decode(g_ctx, batch);
+            if (decode_res != 0) {
+                if (g_stop_flag.load() || decode_res == 2) {
+                    LOGI("[%s] Decode aborted by stop signal", currentTimestamp().c_str());
+                } else {
+                    LOGE("[%s] Failed to decode after sampling token %d (res=%d)", currentTimestamp().c_str(), i + 1, decode_res);
+                }
+                break;
+            }
+            g_n_past.fetch_add(1);
+        }
+        LOGI("[%s] Generation loop finished. Dispatching [DONE]", currentTimestamp().c_str());
+
+        jstring done_str = env->NewStringUTF("[DONE]");
+        env->CallObjectMethod(token_callback, invokeMethod, done_str);
+        env->DeleteLocalRef(done_str);
+
+    } catch (const std::exception& e) {
+        LOGE("[%s] Native inference failed: %s", currentTimestamp().c_str(), e.what());
+        jstring err_str = env->NewStringUTF((std::string("[ERROR]: ") + e.what()).c_str());
+        env->CallObjectMethod(token_callback, invokeMethod, err_str);
+        env->DeleteLocalRef(err_str);
+    } catch (...) {
+        LOGE("[%s] Native inference failed with unknown error", currentTimestamp().c_str());
+        jstring err_str = env->NewStringUTF("[ERROR]: Unknown native error");
+        env->CallObjectMethod(token_callback, invokeMethod, err_str);
+        env->DeleteLocalRef(err_str);
+    }
+
+    env->DeleteLocalRef(callbackClass);
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeStop(
     JNIEnv* env, jobject thiz) {
-    g_stop_flag = true;
+    LOGI("[%s] nativeStop called -> setting g_stop_flag = true", currentTimestamp().c_str());
+    g_stop_flag.store(true);
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeFreeModel(
     JNIEnv* env, jobject thiz) {
-    g_stop_flag = true;
+    LOGI("[%s] nativeFreeModel called", currentTimestamp().c_str());
+    g_stop_flag.store(true);
+
+    for (int i = 0; i < 50 && g_is_generating.load(); i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
     std::lock_guard<std::mutex> lock(g_infer_mutex);
     if (g_sampler) {
         llama_sampler_free(g_sampler);
@@ -814,26 +864,30 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeFreeMo
         g_model = nullptr;
     }
     g_vocab = nullptr;
-    g_n_past = 0;
-    LOGI("Model freed");
+    g_n_past.store(0);
+    g_context_size.store(0);
+    LOGI("[%s] Model freed successfully", currentTimestamp().c_str());
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGetTokensUsed(
     JNIEnv* env, jobject thiz) {
-    return g_n_past;
+    return g_n_past.load();
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGetContextSize(
     JNIEnv* env, jobject thiz) {
-    std::lock_guard<std::mutex> lock(g_infer_mutex);
-    return g_ctx ? llama_n_ctx(g_ctx) : 0;
+    return g_context_size.load();
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeClearContext(
     JNIEnv* env, jobject thiz) {
+    if (g_is_generating.load()) {
+        LOGW("[%s] Cannot clear context while generation is active", currentTimestamp().c_str());
+        return;
+    }
     std::lock_guard<std::mutex> lock(g_infer_mutex);
     if (!g_ctx) {
         LOGE("Cannot clear context: context is null");
@@ -843,8 +897,8 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeClearC
     llama_memory_t mem = llama_get_memory(g_ctx);
     if (mem) {
         llama_memory_seq_rm(mem, 0, 0, -1);
-        g_n_past = 0;
-        LOGI("Context cleared, g_n_past reset to 0");
+        g_n_past.store(0);
+        LOGI("[%s] Context cleared, g_n_past reset to 0", currentTimestamp().c_str());
     } else {
         LOGE("Failed to get memory object from context");
     }
@@ -859,13 +913,18 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeSetSys
 extern "C" JNIEXPORT void JNICALL
 Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeSetNThreads(
     JNIEnv* env, jobject thiz, jint n_threads, jint n_threads_batch) {
+    if (g_is_generating.load()) {
+        LOGW("[%s] Skipping dynamic thread update while generation is active", currentTimestamp().c_str());
+        return;
+    }
     std::lock_guard<std::mutex> lock(g_infer_mutex);
     if (g_ctx) {
         int32_t clamped_threads = std::min(4, std::max(1, (int32_t)n_threads));
         int32_t clamped_threads_batch = std::min(4, std::max(1, (int32_t)n_threads_batch));
         llama_set_n_threads(g_ctx, clamped_threads, clamped_threads_batch);
-        LOGI("Dynamic threads updated via llama_set_n_threads: requested=%d/%d, clamped=%d/%d",
-             n_threads, n_threads_batch, clamped_threads, clamped_threads_batch);
+        LOGI("[%s] Dynamic threads updated: requested=%d/%d, clamped=%d/%d",
+             currentTimestamp().c_str(), n_threads, n_threads_batch, clamped_threads, clamped_threads_batch);
     }
 }
+
 
