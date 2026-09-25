@@ -62,6 +62,8 @@ class AppConstants {
   static const String keyCpuThreads = 'cpu_threads';
   static const String keyBatchThreads = 'batch_threads';
   static const String keyBatchSize = 'batch_size';
+  static const String keyGpuAcceleration = 'gpu_acceleration';
+  static const String keyGpuLayers = 'gpu_layers';
 
   // Default Model Config
   static const double defaultTemperature = 0.7;
@@ -73,6 +75,8 @@ class AppConstants {
   static const int defaultBatchThreads = 6;
   static const int defaultBatchSize = 512;
   static const List<int> batchSizeOptions = [128, 256, 512, 1024];
+  static const bool defaultGpuAcceleration = true;
+  static const int defaultGpuLayers = 99;
   static const String defaultLiteRtPerformanceMode = 'auto_fast';
   static const int defaultImageSteps = 1;
   static const bool defaultImageGenForceCpu = true;

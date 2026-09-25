@@ -56,6 +56,8 @@ class InferenceEngine {
     int? cpuThreads,
     int? batchThreads,
     int? batchSize,
+    bool gpuAcceleration = true,
+    int? gpuLayers,
     void Function(double)? onProgress,
   }) async {
     _disposed = false;
@@ -75,42 +77,34 @@ class InferenceEngine {
     _isLiteRt = false;
     _controller = LlamaController();
 
-    // ── GPU Detection ──
-    int gpuLayers = 0;
+    // ── GPU Detection & Layer Offloading ──
+    int targetGpuLayers = 0;
     String gpuNameStr = '';
 
-    try {
-      final gpu = await _controller!.detectGpu();
-      gpuNameStr = gpu.gpuName;
+    if (!gpuAcceleration) {
+      targetGpuLayers = 0;
+      print('[Inference] GPU acceleration disabled: CPU-only execution (0 layers)');
+    } else {
+      targetGpuLayers = gpuLayers ?? 99;
+      try {
+        final gpu = await _controller!.detectGpu();
+        gpuNameStr = gpu.gpuName;
 
-      print('[Inference] GPU: ${gpu.gpuName}');
-      print('[Inference]   Vulkan: ${gpu.vulkanSupported}');
-      print('[Inference]   Free RAM: ${gpu.freeRamBytes ~/ 1024 ~/ 1024}MB');
-      print('[Inference]   Recommended layers: ${gpu.recommendedGpuLayers}');
-
-      if (gpu.vulkanSupported && gpu.recommendedGpuLayers > 0) {
-        final gpuNum = _extractGpuModel(gpu.gpuName);
-        if (gpuNum >= 700) {
-          gpuLayers = 99;
-          print('[Inference] ✓ High-end GPU ($gpuNum) → full offload');
-        } else if (gpuNum >= 650) {
-          gpuLayers = gpu.recommendedGpuLayers;
-          print('[Inference] ✓ Upper-mid GPU ($gpuNum) → $gpuLayers layers');
-        } else {
-          gpuLayers = 0;
-          print(
-              '[Inference] Mid-range GPU ($gpuNum) — CPU is faster, skipping GPU');
-        }
+        print('[Inference] GPU: ${gpu.gpuName}');
+        print('[Inference]   Vulkan: ${gpu.vulkanSupported}');
+        print('[Inference]   Free RAM: ${gpu.freeRamBytes ~/ 1024 ~/ 1024}MB');
+        print('[Inference]   Recommended layers: ${gpu.recommendedGpuLayers}');
+        print('[Inference]   Configured offload layers: $targetGpuLayers');
+      } catch (e) {
+        print('[Inference] GPU detection note: $e');
       }
-    } catch (e) {
-      print('[Inference] GPU detection failed: $e — CPU fallback');
     }
 
     // ── Thread Tuning ──
     int threads;
     if (cpuThreads != null && cpuThreads > 0) {
       threads = cpuThreads;
-    } else if (gpuLayers > 0) {
+    } else if (targetGpuLayers > 0) {
       threads = deviceTier == 'ultra'
           ? 4
           : deviceTier == 'high'
@@ -153,7 +147,7 @@ class InferenceEngine {
       modelPath: modelPath,
       threads: threads,
       contextSize: contextSize,
-      gpuLayers: gpuLayers,
+      gpuLayers: targetGpuLayers,
       kvQuantization: kvQuantization,
       contextShift: contextShift,
       batchThreads: bThreads,
@@ -162,8 +156,8 @@ class InferenceEngine {
     );
     _hasLoadedModel = true;
 
-    final accel = gpuLayers > 0
-        ? 'GPU ($gpuLayers layers, $gpuNameStr)'
+    final accel = targetGpuLayers > 0
+        ? 'GPU ($targetGpuLayers layers, $gpuNameStr)'
         : 'CPU ($threads threads)';
     print('[Inference] ✓ Model loaded: $accel, ctx=$contextSize');
 
@@ -171,9 +165,9 @@ class InferenceEngine {
       success: true,
       message: 'Model loaded ($accel).',
       gpuName: gpuNameStr,
-      gpuLayers: gpuLayers,
+      gpuLayers: targetGpuLayers,
       runtime: 'llama',
-      backend: gpuLayers > 0 ? 'gpu' : 'cpu',
+      backend: targetGpuLayers > 0 ? 'gpu' : 'cpu',
     );
   }
 

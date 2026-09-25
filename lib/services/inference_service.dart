@@ -140,6 +140,20 @@ class InferenceService extends GetxService {
           ) ??
           AppConstants.defaultBatchSize;
 
+      final gpuAcceleration = _hive.getSetting<bool>(
+            AppConstants.keyGpuAcceleration,
+            defaultValue: AppConstants.defaultGpuAcceleration,
+          ) ??
+          AppConstants.defaultGpuAcceleration;
+
+      final configuredGpuLayers = _hive.getSetting<int>(
+            AppConstants.keyGpuLayers,
+            defaultValue: AppConstants.defaultGpuLayers,
+          ) ??
+          AppConstants.defaultGpuLayers;
+
+      final effectiveGpuLayers = gpuAcceleration ? configuredGpuLayers : 0;
+
       final finalContextSize =
           isLiteRt ? contextSize.clamp(512, 4096) : contextSize;
 
@@ -170,6 +184,8 @@ class InferenceService extends GetxService {
         cpuThreads: cpuThreads,
         batchThreads: batchThreads,
         batchSize: batchSize,
+        gpuAcceleration: gpuAcceleration,
+        gpuLayers: effectiveGpuLayers,
       );
 
       if (!result.success &&
@@ -502,6 +518,8 @@ class InferenceService extends GetxService {
     int? cpuThreads,
     int? batchThreads,
     int? batchSize,
+    bool gpuAcceleration = true,
+    int? gpuLayers,
   }) async {
     var gpuLoadFailed = false;
     try {
@@ -523,6 +541,8 @@ class InferenceService extends GetxService {
         cpuThreads: cpuThreads,
         batchThreads: batchThreads,
         batchSize: batchSize,
+        gpuAcceleration: gpuAcceleration,
+        gpuLayers: gpuLayers,
         onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
       );
       if (result.success ||
@@ -549,6 +569,8 @@ class InferenceService extends GetxService {
         cpuThreads: cpuThreads,
         batchThreads: batchThreads,
         batchSize: batchSize,
+        gpuAcceleration: gpuAcceleration,
+        gpuLayers: gpuLayers,
         onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
       );
     } catch (e) {
@@ -572,6 +594,8 @@ class InferenceService extends GetxService {
             cpuThreads: cpuThreads,
             batchThreads: batchThreads,
             batchSize: batchSize,
+            gpuAcceleration: gpuAcceleration,
+            gpuLayers: gpuLayers,
             onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
           );
         } catch (cpuError) {

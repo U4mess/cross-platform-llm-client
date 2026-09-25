@@ -53,6 +53,8 @@ class SettingsController extends GetxController {
   final cpuThreads = AppConstants.defaultCpuThreads.obs;
   final batchThreads = AppConstants.defaultBatchThreads.obs;
   final batchSize = AppConstants.defaultBatchSize.obs;
+  final RxBool gpuAcceleration = AppConstants.defaultGpuAcceleration.obs;
+  final RxInt gpuLayers = AppConstants.defaultGpuLayers.obs;
   final liteRtPerformanceMode = AppConstants.defaultLiteRtPerformanceMode.obs;
   final imageSteps = 1.obs;
   final imageGenForceCpu = AppConstants.defaultImageGenForceCpu.obs;
@@ -131,6 +133,7 @@ class SettingsController extends GetxController {
     customCloudModelController.dispose();
     _apiKeyDebounceTimer?.cancel();
     _modelDebounceTimer?.cancel();
+    _gpuLayersDebounceTimer?.cancel();
     super.onClose();
   }
 
@@ -213,6 +216,16 @@ class SettingsController extends GetxController {
     batchSize.value = _hive.getSetting<int>(AppConstants.keyBatchSize,
             defaultValue: AppConstants.defaultBatchSize) ??
         AppConstants.defaultBatchSize;
+    gpuAcceleration.value = _hive.getSetting<bool>(
+          AppConstants.keyGpuAcceleration,
+          defaultValue: AppConstants.defaultGpuAcceleration,
+        ) ??
+        AppConstants.defaultGpuAcceleration;
+    gpuLayers.value = _hive.getSetting<int>(
+          AppConstants.keyGpuLayers,
+          defaultValue: AppConstants.defaultGpuLayers,
+        ) ??
+        AppConstants.defaultGpuLayers;
     liteRtPerformanceMode.value = _hive.getSetting(
           AppConstants.keyLiteRtPerformanceMode,
           defaultValue: AppConstants.defaultLiteRtPerformanceMode,
@@ -753,6 +766,44 @@ class SettingsController extends GetxController {
       final inference = Get.find<InferenceService>();
       if (inference.isModelLoaded.value &&
           inference.loadedModelRuntime.value != 'litert') {
+        await inference.reloadModel();
+      }
+    } catch (_) {}
+  }
+
+  bool get currentGpuAcceleration => gpuAcceleration.value;
+  int get currentGpuLayers => gpuLayers.value;
+
+  Timer? _gpuLayersDebounceTimer;
+
+  Future<void> setGpuAcceleration(bool value) async {
+    gpuAcceleration.value = value;
+    await _hive.setSetting(AppConstants.keyGpuAcceleration, value);
+    await reloadActiveModelIfLoaded();
+  }
+
+  void updateGpuLayers(int value) {
+    final clamped = value.clamp(0, 99);
+    gpuLayers.value = clamped;
+    _gpuLayersDebounceTimer?.cancel();
+    _gpuLayersDebounceTimer = Timer(const Duration(milliseconds: 500), () {
+      setGpuLayers(clamped);
+    });
+  }
+
+  Future<void> setGpuLayers(int value) async {
+    _gpuLayersDebounceTimer?.cancel();
+    final clamped = value.clamp(0, 99);
+    gpuLayers.value = clamped;
+    await _hive.setSetting(AppConstants.keyGpuLayers, clamped);
+    await reloadActiveModelIfLoaded();
+  }
+
+  Future<void> reloadActiveModelIfLoaded() async {
+    try {
+      final inference = Get.find<InferenceService>();
+      if (inference.isModelLoaded.value &&
+          inference.loadedModelRuntime.value == 'llama') {
         await inference.reloadModel();
       }
     } catch (_) {}

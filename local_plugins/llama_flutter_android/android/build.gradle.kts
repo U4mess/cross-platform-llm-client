@@ -53,7 +53,7 @@ android {
     }
 
     defaultConfig {
-        minSdk = 26  // Android 8.0 (for SharedMemory support)
+        minSdk = 28  // Android 9.0 (for Vulkan / SharedMemory support)
         
         ndk {
             abiFilters.addAll(listOf("arm64-v8a"))  // Only ARM64
@@ -74,6 +74,7 @@ android {
                     "-DANDROID_ARM_NEON=ON",
                     "-DGGML_CPU_AARCH64=ON",
                     "-DGGML_DOTPROD=ON",
+                    "-DGGML_VULKAN=ON",
                     "-DGGML_OPENMP=OFF"
                 )
             }
