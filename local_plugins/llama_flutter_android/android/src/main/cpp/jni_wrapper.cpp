@@ -583,7 +583,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
     jmethodID invokeMethod = env->GetMethodID(callbackClass, "invoke", "(Ljava/lang/Object;)Ljava/lang/Object;");
 
     // Generation loop
-    LOGI("Starting generation loop: max_tokens=%lld", max_tokens);
+    LOGI("Starting generation loop: max_tokens=%lld", (long long)max_tokens);
     for (int i = 0; i < max_tokens && !g_stop_flag; i++) {
         // If g_n_past >= n_ctx, shift context window during generation so it does NOT crash or abort!
         if (g_n_past >= n_ctx) {

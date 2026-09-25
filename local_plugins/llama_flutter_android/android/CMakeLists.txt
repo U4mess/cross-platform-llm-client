@@ -42,6 +42,41 @@ set(LLAMA_BUILD_SERVER OFF CACHE BOOL "Disable server")
 # Locate Vulkan library
 find_library(VULKAN_LIB vulkan REQUIRED)
 
+# Android NDK sysroot only provides C Vulkan headers (<vulkan/vulkan.h>) and lacks
+# C++ Vulkan-Hpp (<vulkan/vulkan.hpp>) and SPIR-V headers (<spirv/unified1/spirv.hpp>).
+# Fetch official Khronos Vulkan-Headers and SPIRV-Headers to provide them for the NDK build.
+if(ANDROID)
+    include(FetchContent)
+    FetchContent_Declare(
+        vulkan_headers
+        GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
+        GIT_TAG        vulkan-sdk-1.3.296.0
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_Declare(
+        spirv_headers
+        GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Headers.git
+        GIT_TAG        vulkan-sdk-1.3.296.0
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_GetProperties(vulkan_headers)
+    if(NOT vulkan_headers_POPULATED)
+        FetchContent_Populate(vulkan_headers)
+    endif()
+    FetchContent_GetProperties(spirv_headers)
+    if(NOT spirv_headers_POPULATED)
+        FetchContent_Populate(spirv_headers)
+    endif()
+
+    set(Vulkan_INCLUDE_DIR "${vulkan_headers_SOURCE_DIR}/include" CACHE PATH "Vulkan Include Dir" FORCE)
+    set(Vulkan_INCLUDE_DIRS "${vulkan_headers_SOURCE_DIR}/include" CACHE PATH "Vulkan Include Dirs" FORCE)
+
+    include_directories(BEFORE
+        ${vulkan_headers_SOURCE_DIR}/include
+        ${spirv_headers_SOURCE_DIR}/include
+    )
+endif()
+
 # Add llama.cpp
 add_subdirectory(src/main/cpp/llama.cpp)
 
@@ -59,6 +94,10 @@ if(ANDROID)
         endif()
     endforeach()
     if(TARGET ggml-vulkan)
+        target_include_directories(ggml-vulkan BEFORE PRIVATE
+            ${vulkan_headers_SOURCE_DIR}/include
+            ${spirv_headers_SOURCE_DIR}/include
+        )
         target_link_libraries(ggml-vulkan PRIVATE ${VULKAN_LIB} android log)
     endif()
 endif()
