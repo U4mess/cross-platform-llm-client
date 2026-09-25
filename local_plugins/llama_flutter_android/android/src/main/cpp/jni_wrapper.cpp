@@ -387,12 +387,11 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
         }
         consumeLoadError();
 
-        // 3. Configure KV cache quantization defaults & disable logits_all
+        // 3. Configure KV cache quantization defaults
         llama_context_params cparams = llama_context_default_params();
         cparams.n_ctx = ctx_size;
         cparams.n_threads = n_threads;
         cparams.n_threads_batch = (n_threads_batch > 0) ? (int32_t)n_threads_batch : (int32_t)n_threads;
-        cparams.logits_all = false;
         
         // Batch processing controls: evaluate prompt/tokens concurrently
         cparams.n_batch = (n_batch > 0) ? (uint32_t)n_batch : 512;
@@ -407,7 +406,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
         }
 
         // Create context
-        LOGI("Creating context: n_ctx=%lld, type_k=%d, type_v=%d, logits_all=0, context_shift=%d",
+        LOGI("Creating context: n_ctx=%lld, type_k=%d, type_v=%d, context_shift=%d",
              (long long)ctx_size, cparams.type_k, cparams.type_v, g_context_shift ? 1 : 0);
         g_ctx = llama_init_from_model(g_model, cparams);
         if (!g_ctx && (cparams.type_k != GGML_TYPE_F16 || cparams.type_v != GGML_TYPE_F16)) {
