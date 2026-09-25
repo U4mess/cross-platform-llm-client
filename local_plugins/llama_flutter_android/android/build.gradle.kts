@@ -65,6 +65,7 @@ android {
                 cppFlags += listOf(
                     "-std=c++17",
                     "-O3",
+                    "-fPIC",
                     "-fvisibility=hidden"
                 )
                 
@@ -74,6 +75,8 @@ android {
                     "-DANDROID_ARM_NEON=ON",
                     "-DGGML_CPU_AARCH64=ON",
                     "-DGGML_DOTPROD=ON",
+                    "-DGGML_VULKAN=ON",
+                    "-DGGML_VULKAN_CHECK_RESULTS=OFF",
                     "-DGGML_OPENMP=OFF"
                 )
             }

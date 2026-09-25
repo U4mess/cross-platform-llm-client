@@ -781,6 +781,22 @@ class SettingsController extends GetxController {
     if (normalized == 'gpu_fast') {
       await _hive.setSetting(AppConstants.keyLiteRtGpuCrashDetected, false);
     }
+
+    // Map "Model Parameters" card presets:
+    // - GPU Fast -> nGpuLayers: 999
+    // - Auto Fast -> nGpuLayers: 999
+    // - CPU Safe -> nGpuLayers: 0
+    final targetGpuLayers = (normalized == 'cpu_safe') ? 0 : 999;
+    final isGpu = targetGpuLayers > 0;
+    await _hive.setSetting(AppConstants.keyGpuLayers, targetGpuLayers);
+    await _hive.setSetting(AppConstants.keyGpuAcceleration, isGpu);
+
+    try {
+      final inference = Get.find<InferenceService>();
+      if (inference.isModelLoaded.value) {
+        await inference.reloadModel();
+      }
+    } catch (_) {}
   }
 
   Future<void> setImageSteps(int value) async {

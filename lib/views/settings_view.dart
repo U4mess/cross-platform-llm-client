@@ -414,19 +414,19 @@ class SettingsView extends GetView<SettingsController> {
       (
         value: 'auto_fast',
         title: 'Auto Fast',
-        subtitle: 'Try GPU first, then CPU fallback',
+        subtitle: 'Auto GPU offload (999 layers) with CPU fallback',
         icon: Icons.auto_awesome_rounded
       ),
       (
         value: 'gpu_fast',
         title: 'GPU Fast',
-        subtitle: 'Maximum speed, may crash on some devices',
+        subtitle: 'Maximum GPU speed (999 layers via Vulkan / Adreno 830)',
         icon: Icons.bolt_rounded
       ),
       (
         value: 'cpu_safe',
         title: 'CPU Safe',
-        subtitle: 'Stable mode with lower speed',
+        subtitle: 'Stable CPU-only execution (0 GPU layers)',
         icon: Icons.shield_outlined
       ),
     ];

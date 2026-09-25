@@ -38,6 +38,7 @@ class InferenceEngine {
     int? batchSize,
     bool gpuAcceleration = true,
     int? gpuLayers,
+    int? nGpuLayers,
     void Function(double)? onProgress,
   }) async {
     return LoadResult(

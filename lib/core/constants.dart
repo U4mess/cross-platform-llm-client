@@ -77,7 +77,7 @@ class AppConstants {
   static const int defaultBatchSize = 512;
   static const List<int> batchSizeOptions = [128, 256, 512, 1024];
   static const bool defaultGpuAcceleration = true;
-  static const int defaultGpuLayers = 99;
+  static const int defaultGpuLayers = 999;
   static const String defaultLiteRtPerformanceMode = 'auto_fast';
   static const int defaultImageSteps = 1;
   static const bool defaultImageGenForceCpu = true;

@@ -57,6 +57,7 @@ class InferenceService extends GetxService {
     String? modelName,
     String? modelRuntime,
     bool enableLiteRtVision = false,
+    int? nGpuLayers,
   }) async {
     if (!supportsLocalInference) {
       return 'ERROR: Local inference is not available on this platform. Use Cloud mode.';
@@ -152,7 +153,16 @@ class InferenceService extends GetxService {
           ) ??
           AppConstants.defaultGpuLayers;
 
-      final effectiveGpuLayers = gpuAcceleration ? configuredGpuLayers : 0;
+      // Map presets: GPU Fast -> 999, Auto Fast -> 999, CPU Safe -> 0
+      final presetGpuLayers = switch (liteRtMode) {
+        'cpu_safe' => 0,
+        'gpu_fast' => 999,
+        'auto_fast' => 999,
+        _ => configuredGpuLayers,
+      };
+
+      final effectiveGpuLayers = nGpuLayers ??
+          ((gpuAcceleration && liteRtMode != 'cpu_safe') ? presetGpuLayers : 0);
 
       final finalContextSize =
           isLiteRt ? contextSize.clamp(512, 4096) : contextSize;
@@ -186,6 +196,7 @@ class InferenceService extends GetxService {
         batchSize: batchSize,
         gpuAcceleration: gpuAcceleration,
         gpuLayers: effectiveGpuLayers,
+        nGpuLayers: effectiveGpuLayers,
       );
 
       if (!result.success &&
@@ -520,7 +531,9 @@ class InferenceService extends GetxService {
     int? batchSize,
     bool gpuAcceleration = true,
     int? gpuLayers,
+    int? nGpuLayers,
   }) async {
+    final effectiveLayers = nGpuLayers ?? gpuLayers;
     var gpuLoadFailed = false;
     try {
       if (markLiteRtGpuPending) {
@@ -542,7 +555,8 @@ class InferenceService extends GetxService {
         batchThreads: batchThreads,
         batchSize: batchSize,
         gpuAcceleration: gpuAcceleration,
-        gpuLayers: gpuLayers,
+        gpuLayers: effectiveLayers,
+        nGpuLayers: effectiveLayers,
         onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
       );
       if (result.success ||
@@ -570,7 +584,8 @@ class InferenceService extends GetxService {
         batchThreads: batchThreads,
         batchSize: batchSize,
         gpuAcceleration: gpuAcceleration,
-        gpuLayers: gpuLayers,
+        gpuLayers: effectiveLayers,
+        nGpuLayers: effectiveLayers,
         onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
       );
     } catch (e) {
@@ -595,7 +610,8 @@ class InferenceService extends GetxService {
             batchThreads: batchThreads,
             batchSize: batchSize,
             gpuAcceleration: gpuAcceleration,
-            gpuLayers: gpuLayers,
+            gpuLayers: effectiveLayers,
+            nGpuLayers: effectiveLayers,
             onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
           );
         } catch (cpuError) {

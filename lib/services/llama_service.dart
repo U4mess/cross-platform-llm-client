@@ -42,7 +42,7 @@ class LlamaService extends GetxService {
       ) ??
       AppConstants.defaultGpuAcceleration;
 
-  /// Configured number of layers to offload to GPU (0-99, default: 99)
+  /// Configured number of layers to offload to GPU (0-999, default: 999)
   int get gpuLayers =>
       _hive.getSetting<int>(
         AppConstants.keyGpuLayers,
@@ -51,7 +51,7 @@ class LlamaService extends GetxService {
       AppConstants.defaultGpuLayers;
 
   /// Effective GPU layers to offload:
-  /// When GPU acceleration is enabled: gpuLayers (default: 99)
+  /// When GPU acceleration is enabled: gpuLayers (default: 999)
   /// When disabled: 0 (CPU-only execution).
   int get effectiveGpuLayers => gpuAcceleration ? gpuLayers : 0;
 
@@ -94,7 +94,7 @@ class LlamaService extends GetxService {
         await _hive.setSetting(AppConstants.keyGpuAcceleration, gpuAcceleration);
       }
       if (gpuLayers != null) {
-        await _hive.setSetting(AppConstants.keyGpuLayers, gpuLayers.clamp(0, 99));
+        await _hive.setSetting(AppConstants.keyGpuLayers, gpuLayers.clamp(0, 999));
       }
       return await reloadContext();
     } catch (e) {

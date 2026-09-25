@@ -24,6 +24,7 @@ class LlamaController implements LlamaFlutterApi {
     int threads = 4,
     int contextSize = 2048,
     int? gpuLayers,
+    int? nGpuLayers,
     String? kvQuantization,
     bool contextShift = true,
     int? batchThreads,
@@ -36,11 +37,12 @@ class LlamaController implements LlamaFlutterApi {
 
     _isLoading = true;
     try {
+      final effectiveLayers = nGpuLayers ?? gpuLayers;
       await _api.loadModel(ModelConfig(
         modelPath: modelPath,
         nThreads: threads,
         contextSize: contextSize,
-        nGpuLayers: gpuLayers,
+        nGpuLayers: effectiveLayers,
         kvQuantization: kvQuantization,
         contextShift: contextShift,
         nThreadsBatch: batchThreads,

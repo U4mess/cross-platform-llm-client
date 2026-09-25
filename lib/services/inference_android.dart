@@ -58,6 +58,7 @@ class InferenceEngine {
     int? batchSize,
     bool gpuAcceleration = true,
     int? gpuLayers,
+    int? nGpuLayers,
     void Function(double)? onProgress,
   }) async {
     _disposed = false;
@@ -81,11 +82,17 @@ class InferenceEngine {
     int targetGpuLayers = 0;
     String gpuNameStr = '';
 
-    if (!gpuAcceleration) {
+    final layersRequested = nGpuLayers ?? gpuLayers;
+    if (liteRtPerformanceMode == 'cpu_safe' || !gpuAcceleration) {
       targetGpuLayers = 0;
-      print('[Inference] GPU acceleration disabled: CPU-only execution (0 layers)');
+      print('[Inference] CPU Safe selected or GPU acceleration disabled: CPU-only execution (0 layers)');
+    } else if (liteRtPerformanceMode == 'gpu_fast' || liteRtPerformanceMode == 'auto_fast') {
+      targetGpuLayers = layersRequested ?? 999;
     } else {
-      targetGpuLayers = gpuLayers ?? 99;
+      targetGpuLayers = layersRequested ?? 999;
+    }
+
+    if (targetGpuLayers > 0) {
       try {
         final gpu = await _controller!.detectGpu();
         gpuNameStr = gpu.gpuName;
@@ -148,6 +155,7 @@ class InferenceEngine {
       threads: threads,
       contextSize: contextSize,
       gpuLayers: targetGpuLayers,
+      nGpuLayers: targetGpuLayers,
       kvQuantization: kvQuantization,
       contextShift: contextShift,
       batchThreads: bThreads,
