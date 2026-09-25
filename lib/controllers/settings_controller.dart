@@ -91,6 +91,7 @@ class SettingsController extends GetxController {
 
   Timer? _apiKeyDebounceTimer;
   Timer? _modelDebounceTimer;
+  Timer? _gpuLayersDebounceTimer;
 
   @override
   void onInit() {
@@ -773,8 +774,6 @@ class SettingsController extends GetxController {
 
   bool get currentGpuAcceleration => gpuAcceleration.value;
   int get currentGpuLayers => gpuLayers.value;
-
-  Timer? _gpuLayersDebounceTimer;
 
   Future<void> setGpuAcceleration(bool value) async {
     gpuAcceleration.value = value;
