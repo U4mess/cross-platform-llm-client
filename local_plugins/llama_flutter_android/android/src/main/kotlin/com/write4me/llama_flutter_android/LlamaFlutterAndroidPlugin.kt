@@ -119,12 +119,16 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
             return
         }
 
+        val reqId = "req_#${reqCounter.incrementAndGet()}"
+        activeRequestId.set(reqId)
+
         isStopping.set(false)
         generationJob = scope.launch(Dispatchers.Default) {
             try {
-                Log.i(TAG, "[${timestamp()}] Send / nativeGenerate started")
+                Log.i(TAG, "[$reqId] [NativeStart] generate started")
                 nativeGenerate(
                     request.prompt,
+                    reqId,
                     request.maxTokens,
                     request.temperature,
                     request.topP,
@@ -141,16 +145,23 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
                     request.seed ?: -1L,  // Use -1 for random seed
                     request.penalizeNewline
                 ) { token ->
+                    if (token.startsWith("[STAGE]: ")) {
+                        Log.i(TAG, token.removePrefix("[STAGE]: "))
+                        mainHandler.post {
+                            flutterApi.onToken(token) { }
+                        }
+                        return@nativeGenerate
+                    }
                     val isTerminal = token == "[DONE]" || token.startsWith("[ERROR]: ")
                     val stopped = isStopping.get()
                     if (!stopped || isTerminal) {
                         mainHandler.post {
                             if (token == "[DONE]") {
-                                Log.i(TAG, "[${timestamp()}] [DONE] callback dispatched to Flutter")
+                                Log.i(TAG, "[$reqId] [TerminalCallback] [DONE] dispatched to Flutter")
                                 flutterApi.onDone { }
                             } else if (token.startsWith("[ERROR]: ")) {
                                 val err = token.removePrefix("[ERROR]: ")
-                                Log.e(TAG, "[${timestamp()}] [ERROR] callback dispatched to Flutter: $err")
+                                Log.e(TAG, "[$reqId] [TerminalCallback] [ERROR] dispatched to Flutter: $err")
                                 flutterApi.onError(err) { }
                             } else {
                                 flutterApi.onToken(token) { }
@@ -160,11 +171,11 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
                 }
 
                 withContext(Dispatchers.Main) {
-                    Log.i(TAG, "[${timestamp()}] nativeGenerate finished successfully")
+                    Log.i(TAG, "[$reqId] nativeGenerate finished successfully")
                     callback(Result.success(Unit))
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "[${timestamp()}] Generation exception: ${e.message}", e)
+                Log.e(TAG, "[$reqId] Generation exception: ${e.message}", e)
                 mainHandler.post {
                     flutterApi.onError(e.message ?: "Generation failed") { }
                 }
