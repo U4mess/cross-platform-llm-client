@@ -124,19 +124,13 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
                     if (!isStopping.get()) {
                         scope.launch {
                             withContext(Dispatchers.Main) {
-                                flutterApi.onToken(token) { result ->
-                                    // Handle result if needed
+                                if (token == "[DONE]") {
+                                    flutterApi.onDone { }
+                                } else if (token.startsWith("[ERROR]: ")) {
+                                    flutterApi.onError(token.removePrefix("[ERROR]: ")) { }
+                                } else {
+                                    flutterApi.onToken(token) { }
                                 }
-                            }
-                        }
-                    }
-                }
-
-                if (!isStopping.get()) {
-                    scope.launch {
-                        withContext(Dispatchers.Main) {
-                            flutterApi.onDone { result ->
-                                // Handle result if needed
                             }
                         }
                     }
@@ -235,19 +229,13 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
                     if (!isStopping.get()) {
                         scope.launch {
                             withContext(Dispatchers.Main) {
-                                flutterApi.onToken(token) { result ->
-                                    // Handle result if needed
+                                if (token == "[DONE]") {
+                                    flutterApi.onDone { }
+                                } else if (token.startsWith("[ERROR]: ")) {
+                                    flutterApi.onError(token.removePrefix("[ERROR]: ")) { }
+                                } else {
+                                    flutterApi.onToken(token) { }
                                 }
-                            }
-                        }
-                    }
-                }
-
-                if (!isStopping.get()) {
-                    scope.launch {
-                        withContext(Dispatchers.Main) {
-                            flutterApi.onDone { result ->
-                                // Handle result if needed
                             }
                         }
                     }

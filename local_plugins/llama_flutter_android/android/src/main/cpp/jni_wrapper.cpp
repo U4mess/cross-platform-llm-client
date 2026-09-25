@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <thread>
 #include <stdexcept>
+#include <sys/resource.h>
 #include <android/log.h>
 #include "llama.cpp/include/llama.h"
 #include "ggml-backend.h"
@@ -387,11 +388,15 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
         }
         consumeLoadError();
 
-        // 3. Configure KV cache quantization defaults
+        // 3. Configure KV cache quantization defaults & clamp CPU threads (max 4) to prevent CPU starvation
         llama_context_params cparams = llama_context_default_params();
         cparams.n_ctx = ctx_size;
-        cparams.n_threads = n_threads;
-        cparams.n_threads_batch = (n_threads_batch > 0) ? (int32_t)n_threads_batch : (int32_t)n_threads;
+        int32_t clamped_threads = std::min(4, (int32_t)std::max(1L, (long)n_threads));
+        int32_t clamped_threads_batch = std::min(4, (int32_t)std::max(1L, (long)(n_threads_batch > 0 ? n_threads_batch : n_threads)));
+        cparams.n_threads = clamped_threads;
+        cparams.n_threads_batch = clamped_threads_batch;
+        LOGI("Configured CPU threads: requested=%lld/%lld, clamped=%d/%d",
+             (long long)n_threads, (long long)n_threads_batch, clamped_threads, clamped_threads_batch);
         
         // Batch processing controls: evaluate prompt/tokens concurrently
         cparams.n_batch = (n_batch > 0) ? (uint32_t)n_batch : 512;
@@ -510,26 +515,34 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
     jobject cb_ref = env->NewGlobalRef(token_callback);
     g_stop_flag = false;
 
-    std::string worker_error;
-
-    // Run inference on a dedicated native background thread to prevent UI freezing
-    std::thread worker([&, cb_ref, prompt_str, max_tokens, temperature, top_p, top_k, min_p,
-                        typical_p, repeat_penalty, frequency_penalty, presence_penalty,
-                        repeat_last_n, mirostat, mirostat_tau, mirostat_eta, seed,
-                        penalize_newline]() {
+    // Decouple inference from the UI thread: launch prompt evaluation and autoregressive decode
+    // loop in a detached background thread so the JNI call returns immediately to Flutter.
+    std::thread([=]() {
         JvmAttachment jvm_att(g_jvm);
         JNIEnv* t_env = jvm_att.env;
         if (!t_env) {
             LOGE("Worker thread failed to attach to JVM");
-            worker_error = "Worker thread failed to attach to JVM";
             return;
         }
 
+        // Prevent CPU starvation: set native thread priority to background (nice +10)
+        setpriority(PRIO_PROCESS, 0, 10);
+
         std::lock_guard<std::mutex> lock(g_infer_mutex);
         if (!g_model || !g_ctx || !g_vocab) {
-            worker_error = "Model not loaded";
+            LOGE("Model not loaded in worker thread");
+            jclass callbackClass = t_env->GetObjectClass(cb_ref);
+            jmethodID invokeMethod = t_env->GetMethodID(callbackClass, "invoke", "(Ljava/lang/Object;)Ljava/lang/Object;");
+            jstring err_str = t_env->NewStringUTF("[ERROR]: Model not loaded");
+            t_env->CallObjectMethod(cb_ref, invokeMethod, err_str);
+            t_env->DeleteLocalRef(err_str);
+            t_env->DeleteLocalRef(callbackClass);
+            t_env->DeleteGlobalRef(cb_ref);
             return;
         }
+
+        jclass callbackClass = t_env->GetObjectClass(cb_ref);
+        jmethodID invokeMethod = t_env->GetMethodID(callbackClass, "invoke", "(Ljava/lang/Object;)Ljava/lang/Object;");
 
         try {
             const int prompt_len = (int)prompt_str.length();
@@ -604,11 +617,11 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
                     batch.pos[batch.n_tokens] = g_n_past + tokens_processed + i;
                     batch.n_seq_id[batch.n_tokens] = 1;
                     batch.seq_id[batch.n_tokens][0] = 0;
-                    batch.logits[batch.n_tokens] = (tokens_processed + i == (int)tokens.size() - 1);
+                    batch.logits[batch.n_tokens] = false;
                     batch.n_tokens++;
                 }
 
-                // Ensure the last token has logits enabled
+                // Ensure the last token of the final batch has logits enabled
                 if (tokens_processed + batch_size >= (int)tokens.size() && batch.n_tokens > 0) {
                     batch.logits[batch.n_tokens - 1] = true;
                 }
@@ -624,6 +637,11 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
 
             if (g_stop_flag) {
                 LOGI("Generation stopped by user during prompt evaluation");
+                jstring done_str = t_env->NewStringUTF("[DONE]");
+                t_env->CallObjectMethod(cb_ref, invokeMethod, done_str);
+                t_env->DeleteLocalRef(done_str);
+                t_env->DeleteLocalRef(callbackClass);
+                t_env->DeleteGlobalRef(cb_ref);
                 return;
             }
 
@@ -682,9 +700,6 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
 
             llama_sampler_chain_add(g_sampler, llama_sampler_init_dist(sampler_seed));
 
-            jclass callbackClass = t_env->GetObjectClass(cb_ref);
-            jmethodID invokeMethod = t_env->GetMethodID(callbackClass, "invoke", "(Ljava/lang/Object;)Ljava/lang/Object;");
-
             LOGI("Starting generation loop: max_tokens=%lld", (long long)max_tokens);
             for (int i = 0; i < max_tokens && !g_stop_flag; i++) {
                 if (g_n_past >= n_ctx) {
@@ -708,6 +723,8 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
                 }
 
                 llama_token new_token_id = llama_sampler_sample(g_sampler, g_ctx, -1);
+
+                // Break immediately on EOS
                 if (llama_vocab_is_eog(g_vocab, new_token_id)) {
                     LOGI("EOS token detected, ending generation.");
                     break;
@@ -732,41 +749,45 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
                     break;
                 }
 
-                batch.n_tokens = 0;
-                batch.token[batch.n_tokens] = new_token_id;
-                batch.pos[batch.n_tokens] = g_n_past;
-                batch.n_seq_id[batch.n_tokens] = 1;
-                batch.seq_id[batch.n_tokens][0] = 0;
-                batch.logits[batch.n_tokens] = true;
-                batch.n_tokens++;
-                batch.logits[batch.n_tokens - 1] = true;
+                // Autoregressive decode advances position:
+                // Verify n_past is incremented, batch.n_tokens = 1, batch.token[0] = sampled_token,
+                // batch.pos[0] = n_past, batch.logits[0] = true
+                g_n_past++;
+
+                batch.n_tokens = 1;
+                batch.token[0] = new_token_id;
+                batch.pos[0] = g_n_past;
+                batch.n_seq_id[0] = 1;
+                batch.seq_id[0][0] = 0;
+                batch.logits[0] = true;
 
                 int decode_res = llama_decode(g_ctx, batch);
                 if (decode_res != 0) {
                     LOGE("Failed to decode after sampling token %d (res=%d)", i + 1, decode_res);
-                    throw std::runtime_error("Failed to decode token after sampling (code " + std::to_string(decode_res) + ")");
+                    break;
                 }
-
-                g_n_past++;
             }
             LOGI("Generation loop finished.");
-            t_env->DeleteLocalRef(callbackClass);
+
+            jstring done_str = t_env->NewStringUTF("[DONE]");
+            t_env->CallObjectMethod(cb_ref, invokeMethod, done_str);
+            t_env->DeleteLocalRef(done_str);
+
         } catch (const std::exception& e) {
             LOGE("Native inference failed: %s", e.what());
-            worker_error = e.what();
+            jstring err_str = t_env->NewStringUTF((std::string("[ERROR]: ") + e.what()).c_str());
+            t_env->CallObjectMethod(cb_ref, invokeMethod, err_str);
+            t_env->DeleteLocalRef(err_str);
         } catch (...) {
             LOGE("Native inference failed with unknown error");
-            worker_error = "Unknown native error during inference";
+            jstring err_str = t_env->NewStringUTF("[ERROR]: Unknown native error");
+            t_env->CallObjectMethod(cb_ref, invokeMethod, err_str);
+            t_env->DeleteLocalRef(err_str);
         }
-    });
 
-    worker.join();
-    env->DeleteGlobalRef(cb_ref);
-
-    if (!worker_error.empty()) {
-        jclass exception = env->FindClass("java/lang/RuntimeException");
-        env->ThrowNew(exception, worker_error.c_str());
-    }
+        t_env->DeleteLocalRef(callbackClass);
+        t_env->DeleteGlobalRef(cb_ref);
+    }).detach();
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -840,9 +861,11 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeSetNTh
     JNIEnv* env, jobject thiz, jint n_threads, jint n_threads_batch) {
     std::lock_guard<std::mutex> lock(g_infer_mutex);
     if (g_ctx) {
-        llama_set_n_threads(g_ctx, n_threads, n_threads_batch);
-        LOGI("Dynamic threads updated via llama_set_n_threads: n_threads=%d, n_threads_batch=%d",
-             n_threads, n_threads_batch);
+        int32_t clamped_threads = std::min(4, std::max(1, (int32_t)n_threads));
+        int32_t clamped_threads_batch = std::min(4, std::max(1, (int32_t)n_threads_batch));
+        llama_set_n_threads(g_ctx, clamped_threads, clamped_threads_batch);
+        LOGI("Dynamic threads updated via llama_set_n_threads: requested=%d/%d, clamped=%d/%d",
+             n_threads, n_threads_batch, clamped_threads, clamped_threads_batch);
     }
 }
 
