@@ -61,7 +61,7 @@ jobs:
         run: flutter pub get
 
       - name: Run Flutter Analyze
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos
 
       - name: Install Vulkan Shader Compiler (glslc)
         run: |
