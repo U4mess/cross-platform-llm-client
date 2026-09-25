@@ -608,6 +608,11 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
                     batch.n_tokens++;
                 }
 
+                // Ensure the last token has logits enabled
+                if (tokens_processed + batch_size >= (int)tokens.size() && batch.n_tokens > 0) {
+                    batch.logits[batch.n_tokens - 1] = true;
+                }
+
                 LOGI("Decoding batch: g_n_past=%d, batch_size=%d", g_n_past + tokens_processed, batch.n_tokens);
                 int decode_result = llama_decode(g_ctx, batch);
                 if (decode_result != 0) {
@@ -695,6 +700,16 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
                     }
                 }
 
+                // Defensive null-check before calling sampler
+                float* logits = (batch.n_tokens > 0) ? llama_get_logits_ith(g_ctx, batch.n_tokens - 1) : nullptr;
+                if (!logits) {
+                    logits = llama_get_logits_ith(g_ctx, -1);
+                }
+                if (!logits) {
+                    LOGE("Logits returned NULL! Skipping sample to prevent SIGSEGV");
+                    break;
+                }
+
                 llama_token new_token_id = llama_sampler_sample(g_sampler, g_ctx, -1);
                 if (llama_vocab_is_eog(g_vocab, new_token_id)) {
                     LOGI("EOS token detected, ending generation.");
@@ -727,6 +742,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
                 batch.seq_id[batch.n_tokens][0] = 0;
                 batch.logits[batch.n_tokens] = true;
                 batch.n_tokens++;
+                batch.logits[batch.n_tokens - 1] = true;
 
                 int decode_res = llama_decode(g_ctx, batch);
                 if (decode_res != 0) {
