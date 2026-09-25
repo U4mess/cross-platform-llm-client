@@ -55,10 +55,6 @@ android {
     defaultConfig {
         minSdk = 28  // Android 9.0 (for Vulkan / SharedMemory support)
         
-        ndk {
-            abiFilters.addAll(listOf("arm64-v8a"))  // Only ARM64
-        }
-        
         externalNativeBuild {
             cmake {
                 // Android 15 16KB page size compliance
