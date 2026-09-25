@@ -45,7 +45,14 @@ class DownloadService extends GetxService with WidgetsBindingObserver {
   Future<String> get modelsDir async => await platform_dl.getModelsDir();
 
   Future<String> modelPath(String filename) async {
-    return '${await modelsDir}/$filename';
+    final defaultPath = '${await modelsDir}/$filename';
+    if (!kIsWeb && await File(defaultPath).exists()) return defaultPath;
+    final externalPath = await platform_dl.getExternalModelsDir();
+    if (externalPath != null) {
+      final extCandidate = '$externalPath/$filename';
+      if (await File(extCandidate).exists()) return extCandidate;
+    }
+    return defaultPath;
   }
 
   Future<bool> isModelDownloaded(String filename) async {
@@ -55,7 +62,13 @@ class DownloadService extends GetxService with WidgetsBindingObserver {
 
   Future<List<String>> getDownloadedModels() async {
     if (kIsWeb) return [];
-    return await platform_dl.getDownloadedModels(await modelsDir);
+    final internalList = await platform_dl.getDownloadedModels(await modelsDir);
+    final externalPath = await platform_dl.getExternalModelsDir();
+    if (externalPath != null && externalPath != await modelsDir) {
+      final externalList = await platform_dl.getDownloadedModels(externalPath);
+      return {...internalList, ...externalList}.toList();
+    }
+    return internalList;
   }
 
   Future<int> getModelSize(String filename) async {

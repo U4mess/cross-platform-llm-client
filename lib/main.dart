@@ -20,6 +20,7 @@ import 'services/inference_service.dart';
 import 'services/llama_service.dart';
 import 'services/cloud_service.dart';
 import 'services/download_service.dart';
+import 'services/hf_download_service.dart';
 import 'services/device_info_service.dart';
 import 'services/local_image_service.dart';
 import 'services/app_log_service.dart';
@@ -80,6 +81,7 @@ void main() {
     Get.put(LlamaService());
     Get.put(CloudService());
     Get.put(DownloadService());
+    Get.put(HfDownloadService());
     Get.put(LocalImageService());
     Get.put(AgentService());
     final crashReporting =

@@ -10,6 +10,8 @@ import '../models/ai_model.dart';
 import '../services/download_service.dart';
 import '../services/inference_service.dart';
 import '../services/local_image_service.dart';
+import '../services/hf_api_service.dart';
+import '../services/hf_download_service.dart';
 
 class ModelView extends GetView<ModelController> {
   const ModelView({super.key});
@@ -28,6 +30,11 @@ class ModelView extends GetView<ModelController> {
             return Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                IconButton(
+                  icon: const Icon(Icons.cloud_download_outlined),
+                  tooltip: 'Download from Hugging Face',
+                  onPressed: () => _showHfDownloadSheet(context),
+                ),
                 IconButton(
                   icon: const Icon(Icons.add_link),
                   tooltip: 'Add Model URL',
@@ -60,6 +67,9 @@ class ModelView extends GetView<ModelController> {
                 const SizedBox(height: 12),
 
                 if (controller.modelScope.value == 'local') ...[
+                  _buildHfBannerButton(context),
+                  const SizedBox(height: 10),
+                  _buildHfActiveTransfers(context),
                   _buildImportingProgress(context),
                   _buildLocalFilterChips(context),
                   const SizedBox(height: 12),
@@ -152,12 +162,23 @@ class ModelView extends GetView<ModelController> {
                 onPressed: controller.isImporting.value ||
                         inference.isLoadingModel.value
                     ? null
+                    : () => _showHfDownloadSheet(context),
+                icon: const Icon(Icons.cloud_download_outlined, size: 16),
+                label: const Text('HF Hub'),
+              )),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Obx(() => OutlinedButton.icon(
+                onPressed: controller.isImporting.value ||
+                        inference.isLoadingModel.value
+                    ? null
                     : () => _showAddUrlDialog(context),
                 icon: const Icon(Icons.add_link, size: 16),
                 label: const Text('URL'),
               )),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 8),
         Expanded(
           child: Obx(() => OutlinedButton.icon(
                 onPressed: controller.isImporting.value ||
@@ -286,6 +307,233 @@ class ModelView extends GetView<ModelController> {
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildHfBannerButton(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: isDark
+              ? [
+                  const Color(0xFF1E293B),
+                  const Color(0xFF0F172A),
+                ]
+              : [
+                  const Color(0xFFFFF7ED),
+                  const Color(0xFFFFEDD5),
+                ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isDark
+              ? const Color(0xFF334155)
+              : const Color(0xFFFDBA74).withValues(alpha: 0.5),
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => _showHfDownloadSheet(context),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFD21E).withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Center(
+                    child: Text('🤗', style: TextStyle(fontSize: 22)),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Download from Hugging Face',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: isDark ? Colors.white : const Color(0xFF9A3412),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Search and download GGUF models directly to device',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: isDark
+                              ? const Color(0xFF94A3B8)
+                              : const Color(0xFFC2410C),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 14,
+                  color: Color(0xFFFF9500),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHfActiveTransfers(BuildContext context) {
+    final hfDownload = Get.find<HfDownloadService>();
+    return Obx(() {
+      final active = hfDownload.activeTransfers.values.toList();
+      if (active.isEmpty) return const SizedBox.shrink();
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: active.map((payload) {
+          final isDark = Theme.of(context).brightness == Brightness.dark;
+          final isDone = payload.isCompleted;
+          final isErr = payload.isFailed;
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: isDone
+                    ? const Color(0xFF34C759)
+                    : (isErr
+                        ? const Color(0xFFFF3B30)
+                        : (isDark
+                            ? const Color(0xFF2C2C2E)
+                            : const Color(0xFFE5E5EA))),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.04),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: isDone
+                            ? const Color(0xFF34C759).withValues(alpha: 0.15)
+                            : (isErr
+                                ? const Color(0xFFFF3B30).withValues(alpha: 0.15)
+                                : const Color(0xFF0A84FF).withValues(alpha: 0.15)),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        isDone
+                            ? Icons.check_circle_rounded
+                            : (isErr
+                                ? Icons.error_outline_rounded
+                                : Icons.downloading_rounded),
+                        size: 20,
+                        color: isDone
+                            ? const Color(0xFF34C759)
+                            : (isErr
+                                ? const Color(0xFFFF3B30)
+                                : const Color(0xFF0A84FF)),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            payload.fileName,
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: isDark ? Colors.white : Colors.black,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            isDone
+                                ? 'Download complete · Available in local models'
+                                : (isErr
+                                    ? 'Failed: ${payload.reason.isNotEmpty ? payload.reason : "Error during transfer"}'
+                                    : '${payload.status.name.toUpperCase()} · ${payload.formattedDownloaded} / ${payload.formattedTotal} (${(payload.progress * 100).toStringAsFixed(1)}%)'),
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              color: isDone
+                                  ? const Color(0xFF34C759)
+                                  : (isErr
+                                      ? const Color(0xFFFF3B30)
+                                      : Theme.of(context).hintColor),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (!isDone && !isErr)
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        tooltip: 'Cancel Download',
+                        onPressed: () =>
+                            hfDownload.cancelDownload(payload.downloadId),
+                      )
+                    else
+                      IconButton(
+                        icon: const Icon(Icons.clear, size: 16),
+                        tooltip: 'Dismiss',
+                        onPressed: () => hfDownload.activeTransfers
+                            .remove(payload.downloadId),
+                      ),
+                  ],
+                ),
+                if (!isDone && !isErr) ...[
+                  const SizedBox(height: 10),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: payload.progress > 0 ? payload.progress : null,
+                      backgroundColor: isDark
+                          ? const Color(0xFF2C2C2E)
+                          : const Color(0xFFE5E5EA),
+                      color: const Color(0xFF0A84FF),
+                      minHeight: 5,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          );
+        }).toList(),
+      );
+    });
+  }
+
+  void _showHfDownloadSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => const _HfDownloadModalSheet(),
     );
   }
 
@@ -3290,3 +3538,856 @@ class _VisionToggle extends StatelessWidget {
     );
   }
 }
+
+class _HfDownloadModalSheet extends StatefulWidget {
+  const _HfDownloadModalSheet();
+
+  @override
+  State<_HfDownloadModalSheet> createState() => _HfDownloadModalSheetState();
+}
+
+class _HfDownloadModalSheetState extends State<_HfDownloadModalSheet> {
+  final TextEditingController _searchController =
+      TextEditingController(text: 'Qwen2.5');
+  Timer? _debounce;
+  List<HfRepository> _repositories = [];
+  bool _isSearching = false;
+  String? _searchError;
+
+  String? _expandedRepoId;
+  final Map<String, List<HfGgufFile>> _repoFiles = {};
+  final Map<String, bool> _repoLoading = {};
+  final Map<String, String?> _repoError = {};
+
+  final List<String> _suggestedQueries = [
+    'Qwen2.5',
+    'Llama-3.2',
+    'Gemma-2',
+    'DeepSeek',
+    'Mistral',
+    'Phi-3.5',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _performSearch('Qwen2.5');
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged(String query) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 450), () {
+      _performSearch(query);
+    });
+  }
+
+  Future<void> _performSearch(String query) async {
+    setState(() {
+      _isSearching = true;
+      _searchError = null;
+    });
+
+    try {
+      final settings = Get.find<SettingsController>();
+      final results = await HfApiService.searchRepositories(
+        query,
+        token: settings.hfToken.value,
+      );
+      if (mounted) {
+        setState(() {
+          _repositories = results;
+          _isSearching = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _searchError = e.toString().replaceFirst('Exception: ', '');
+          _isSearching = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _toggleRepo(String repoId) async {
+    if (_expandedRepoId == repoId) {
+      setState(() => _expandedRepoId = null);
+      return;
+    }
+
+    setState(() => _expandedRepoId = repoId);
+
+    if (_repoFiles.containsKey(repoId)) return;
+
+    setState(() {
+      _repoLoading[repoId] = true;
+      _repoError[repoId] = null;
+    });
+
+    try {
+      final settings = Get.find<SettingsController>();
+      final files = await HfApiService.fetchRepoGgufFiles(
+        repoId,
+        token: settings.hfToken.value,
+      );
+      if (mounted) {
+        setState(() {
+          _repoFiles[repoId] = files;
+          _repoLoading[repoId] = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _repoError[repoId] = e.toString().replaceFirst('Exception: ', '');
+          _repoLoading[repoId] = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final settings = Get.find<SettingsController>();
+    final hfDownload = Get.find<HfDownloadService>();
+    final modelCtrl = Get.find<ModelController>();
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.88,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF121214) : Colors.white,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 20,
+                offset: const Offset(0, -4),
+              ),
+            ],
+          ),
+          child: Column(
+            children: [
+              // Drag handle
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.symmetric(vertical: 12),
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? const Color(0xFF3A3A3C)
+                        : const Color(0xFFD1D1D6),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              // Header
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFD21E).withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Center(
+                        child: Text('🤗', style: TextStyle(fontSize: 20)),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Hugging Face GGUF Hub',
+                            style: GoogleFonts.inter(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700,
+                              color: isDark ? Colors.white : Colors.black,
+                            ),
+                          ),
+                          Text(
+                            'Background resumable downloads via system DownloadManager',
+                            style: GoogleFonts.inter(
+                              fontSize: 11,
+                              color: Theme.of(context).hintColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 20),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              // Search field
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: _onSearchChanged,
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: _performSearch,
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    color: isDark ? Colors.white : Colors.black,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: 'Search models (e.g. Qwen2.5, Llama-3.2, Gemma)...',
+                    hintStyle: GoogleFonts.inter(
+                      fontSize: 13,
+                      color: Theme.of(context).hintColor.withValues(alpha: 0.6),
+                    ),
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, size: 18),
+                            onPressed: () {
+                              _searchController.clear();
+                              _performSearch('');
+                            },
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: isDark
+                        ? const Color(0xFF1C1C1E)
+                        : const Color(0xFFF2F2F7),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              // Preset chips
+              SizedBox(
+                height: 34,
+                child: ListView.separated(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _suggestedQueries.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (context, i) {
+                    final query = _suggestedQueries[i];
+                    final isSelected =
+                        _searchController.text.trim().toLowerCase() ==
+                            query.toLowerCase();
+                    return ActionChip(
+                      label: Text(
+                        query,
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          fontWeight:
+                              isSelected ? FontWeight.w600 : FontWeight.w400,
+                          color: isSelected
+                              ? (isDark ? Colors.white : AppColors.primary)
+                              : Theme.of(context).hintColor,
+                        ),
+                      ),
+                      backgroundColor: isSelected
+                          ? (isDark
+                              ? const Color(0xFF2C2C2E)
+                              : AppColors.primary.withValues(alpha: 0.12))
+                          : (isDark
+                              ? const Color(0xFF1C1C1E)
+                              : const Color(0xFFF2F2F7)),
+                      side: BorderSide.none,
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      onPressed: () {
+                        _searchController.text = query;
+                        _performSearch(query);
+                      },
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 6),
+              // Token status indicator
+              Obx(() {
+                final hasToken = settings.hfToken.value.isNotEmpty;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      Icon(
+                        hasToken
+                            ? Icons.verified_user_rounded
+                            : Icons.lock_outline_rounded,
+                        size: 13,
+                        color: hasToken
+                            ? const Color(0xFF34C759)
+                            : Theme.of(context).hintColor,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        hasToken
+                            ? 'HF Token configured (gated models enabled)'
+                            : 'Gated models (Llama 3, Gemma) require an HF Token in Settings',
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          color: hasToken
+                              ? const Color(0xFF34C759)
+                              : Theme.of(context).hintColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+              const Divider(height: 16),
+              // Active transfers strip inside the sheet
+              Obx(() {
+                final active = hfDownload.activeTransfers.values.toList();
+                if (active.isEmpty) return const SizedBox.shrink();
+                return Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  color: isDark
+                      ? const Color(0xFF18181A)
+                      : const Color(0xFFF8F9FA),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'ACTIVE DOWNLOADS (${active.length})',
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: Theme.of(context).hintColor,
+                          letterSpacing: 1.0,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      ...active.map((p) => Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.downloading_rounded,
+                                    size: 16, color: Color(0xFF0A84FF)),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        p.fileName,
+                                        style: GoogleFonts.inter(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      const SizedBox(height: 3),
+                                      ClipRRect(
+                                        borderRadius: BorderRadius.circular(2),
+                                        child: LinearProgressIndicator(
+                                          value: p.progress > 0
+                                              ? p.progress
+                                              : null,
+                                          minHeight: 4,
+                                          backgroundColor: isDark
+                                              ? const Color(0xFF2C2C2E)
+                                              : const Color(0xFFE5E5EA),
+                                          color: const Color(0xFF0A84FF),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        '${p.formattedDownloaded} / ${p.formattedTotal} · ${(p.progress * 100).toStringAsFixed(1)}%',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 10,
+                                          color: Theme.of(context).hintColor,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.close, size: 16),
+                                  tooltip: 'Cancel',
+                                  onPressed: () =>
+                                      hfDownload.cancelDownload(p.downloadId),
+                                ),
+                              ],
+                            ),
+                          )),
+                    ],
+                  ),
+                );
+              }),
+              // Results list
+              Expanded(
+                child: _isSearching
+                    ? const Center(child: CircularProgressIndicator())
+                    : _searchError != null
+                        ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.error_outline_rounded,
+                                      size: 36, color: Color(0xFFFF3B30)),
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    'Failed to search Hugging Face',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    _searchError!,
+                                    textAlign: TextAlign.center,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 12,
+                                      color: Theme.of(context).hintColor,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  ElevatedButton(
+                                    onPressed: () =>
+                                        _performSearch(_searchController.text),
+                                    child: const Text('Retry'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        : _repositories.isEmpty
+                            ? Center(
+                                child: Text(
+                                  'No GGUF models found.',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    color: Theme.of(context).hintColor,
+                                  ),
+                                ),
+                              )
+                            : ListView.builder(
+                                controller: scrollController,
+                                padding: const EdgeInsets.all(16),
+                                itemCount: _repositories.length,
+                                itemBuilder: (context, index) {
+                                  final repo = _repositories[index];
+                                  final isExpanded =
+                                      _expandedRepoId == repo.id;
+                                  final files = _repoFiles[repo.id];
+                                  final isLoadingFiles =
+                                      _repoLoading[repo.id] == true;
+                                  final repoErr = _repoError[repo.id];
+
+                                  return Card(
+                                    margin: const EdgeInsets.only(bottom: 12),
+                                    elevation: 0,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                      side: BorderSide(
+                                        color: isExpanded
+                                            ? const Color(0xFF0A84FF)
+                                            : (isDark
+                                                ? const Color(0xFF2C2C2E)
+                                                : const Color(0xFFE5E5EA)),
+                                      ),
+                                    ),
+                                    color: isDark
+                                        ? const Color(0xFF1C1C1E)
+                                        : Colors.white,
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(16),
+                                      onTap: () => _toggleRepo(repo.id),
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(16),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment.start,
+                                                    children: [
+                                                      Text(
+                                                        repo.name,
+                                                        style:
+                                                            GoogleFonts.inter(
+                                                          fontSize: 15,
+                                                          fontWeight:
+                                                              FontWeight.w600,
+                                                          color: isDark
+                                                              ? Colors.white
+                                                              : Colors.black,
+                                                        ),
+                                                      ),
+                                                      if (repo.author.isNotEmpty)
+                                                        Text(
+                                                          'by ${repo.author}',
+                                                          style:
+                                                              GoogleFonts.inter(
+                                                            fontSize: 12,
+                                                            color: Theme.of(
+                                                                    context)
+                                                                .hintColor,
+                                                          ),
+                                                        ),
+                                                    ],
+                                                  ),
+                                                ),
+                                                Row(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    if (repo.downloads > 0) ...[
+                                                      Icon(
+                                                        Icons
+                                                            .arrow_downward_rounded,
+                                                        size: 13,
+                                                        color: Theme.of(context)
+                                                            .hintColor,
+                                                      ),
+                                                      const SizedBox(width: 2),
+                                                      Text(
+                                                        _formatCount(
+                                                            repo.downloads),
+                                                        style:
+                                                            GoogleFonts.inter(
+                                                          fontSize: 11,
+                                                          color: Theme.of(
+                                                                  context)
+                                                              .hintColor,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 8),
+                                                    ],
+                                                    Icon(
+                                                      isExpanded
+                                                          ? Icons.expand_less
+                                                          : Icons.expand_more,
+                                                      size: 20,
+                                                      color: Theme.of(context)
+                                                          .hintColor,
+                                                    ),
+                                                  ],
+                                                ),
+                                              ],
+                                            ),
+                                            if (isExpanded) ...[
+                                              const Divider(height: 20),
+                                              if (isLoadingFiles)
+                                                const Center(
+                                                  child: Padding(
+                                                    padding:
+                                                        EdgeInsets.all(16),
+                                                    child:
+                                                        CircularProgressIndicator(),
+                                                  ),
+                                                )
+                                              else if (repoErr != null)
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.all(8),
+                                                  child: Column(
+                                                    children: [
+                                                      Text(
+                                                        'Error: $repoErr',
+                                                        style:
+                                                            GoogleFonts.inter(
+                                                          fontSize: 12,
+                                                          color: const Color(
+                                                              0xFFFF3B30),
+                                                        ),
+                                                      ),
+                                                      const SizedBox(height: 6),
+                                                      TextButton(
+                                                        onPressed: () {
+                                                          _repoFiles
+                                                              .remove(repo.id);
+                                                          _toggleRepo(repo.id);
+                                                        },
+                                                        child: const Text(
+                                                            'Retry'),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                )
+                                              else if (files == null ||
+                                                  files.isEmpty)
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.all(8),
+                                                  child: Text(
+                                                    'No GGUF files found in this repo root.',
+                                                    style: GoogleFonts.inter(
+                                                      fontSize: 12,
+                                                      color: Theme.of(context)
+                                                          .hintColor,
+                                                    ),
+                                                  ),
+                                                )
+                                              else
+                                                ListView.separated(
+                                                  shrinkWrap: true,
+                                                  physics:
+                                                      const NeverScrollableScrollPhysics(),
+                                                  itemCount: files.length,
+                                                  separatorBuilder: (_, __) =>
+                                                      const Divider(height: 12),
+                                                  itemBuilder: (context, fi) {
+                                                    final f = files[fi];
+                                                    return Obx(() {
+                                                      final isDownloaded =
+                                                          modelCtrl
+                                                              .downloadedFiles
+                                                              .contains(
+                                                                  f.filename);
+                                                      final isDownloading =
+                                                          hfDownload
+                                                              .activeTransfers
+                                                              .values
+                                                              .any((p) =>
+                                                                  p.fileName ==
+                                                                      f.filename &&
+                                                                  !p.isCompleted &&
+                                                                  !p.isFailed);
+
+                                                      return Row(
+                                                        children: [
+                                                          // Quant tag chip
+                                                          Container(
+                                                            padding:
+                                                                const EdgeInsets
+                                                                    .symmetric(
+                                                              horizontal: 8,
+                                                              vertical: 4,
+                                                            ),
+                                                            decoration:
+                                                                BoxDecoration(
+                                                              color: const Color(
+                                                                      0xFF0A84FF)
+                                                                  .withValues(
+                                                                      alpha:
+                                                                          0.12),
+                                                              borderRadius:
+                                                                  BorderRadius
+                                                                      .circular(
+                                                                          6),
+                                                            ),
+                                                            child: Text(
+                                                              f.quantTag,
+                                                              style:
+                                                                  GoogleFonts
+                                                                      .inter(
+                                                                fontSize: 11,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w700,
+                                                                color: const Color(
+                                                                    0xFF0A84FF),
+                                                              ),
+                                                            ),
+                                                          ),
+                                                          const SizedBox(
+                                                              width: 10),
+                                                          Expanded(
+                                                            child: Column(
+                                                              crossAxisAlignment:
+                                                                  CrossAxisAlignment
+                                                                      .start,
+                                                              children: [
+                                                                Text(
+                                                                  f.filename,
+                                                                  style:
+                                                                      GoogleFonts
+                                                                          .inter(
+                                                                    fontSize:
+                                                                        13,
+                                                                    fontWeight:
+                                                                        FontWeight
+                                                                            .w500,
+                                                                  ),
+                                                                  maxLines: 1,
+                                                                  overflow:
+                                                                      TextOverflow
+                                                                          .ellipsis,
+                                                                ),
+                                                                Text(
+                                                                  f.sizeFormatted,
+                                                                  style:
+                                                                      GoogleFonts
+                                                                          .inter(
+                                                                    fontSize:
+                                                                        11,
+                                                                    color: Theme.of(
+                                                                            context)
+                                                                        .hintColor,
+                                                                  ),
+                                                                ),
+                                                              ],
+                                                            ),
+                                                          ),
+                                                          if (isDownloaded)
+                                                            Container(
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .symmetric(
+                                                                horizontal: 10,
+                                                                vertical: 6,
+                                                              ),
+                                                              decoration:
+                                                                  BoxDecoration(
+                                                                color: const Color(
+                                                                        0xFF34C759)
+                                                                    .withValues(
+                                                                        alpha:
+                                                                            0.15),
+                                                                borderRadius:
+                                                                    BorderRadius
+                                                                        .circular(
+                                                                            8),
+                                                              ),
+                                                              child: Row(
+                                                                mainAxisSize:
+                                                                    MainAxisSize
+                                                                        .min,
+                                                                children: [
+                                                                  const Icon(
+                                                                    Icons
+                                                                        .check_circle,
+                                                                    size: 14,
+                                                                    color: Color(
+                                                                        0xFF34C759),
+                                                                  ),
+                                                                  const SizedBox(
+                                                                      width: 4),
+                                                                  Text(
+                                                                    'Ready',
+                                                                    style:
+                                                                        GoogleFonts
+                                                                            .inter(
+                                                                      fontSize:
+                                                                          11,
+                                                                      fontWeight:
+                                                                          FontWeight
+                                                                              .w600,
+                                                                      color: const Color(
+                                                                          0xFF34C759),
+                                                                    ),
+                                                                  ),
+                                                                ],
+                                                              ),
+                                                            )
+                                                          else if (isDownloading)
+                                                            const SizedBox(
+                                                              width: 24,
+                                                              height: 24,
+                                                              child:
+                                                                  CircularProgressIndicator(
+                                                                strokeWidth: 2,
+                                                              ),
+                                                            )
+                                                          else
+                                                            IconButton.filledTonal(
+                                                              icon: const Icon(
+                                                                Icons
+                                                                    .download_rounded,
+                                                                size: 18,
+                                                              ),
+                                                              tooltip:
+                                                                  'Download ${f.filename}',
+                                                              onPressed:
+                                                                  () async {
+                                                                try {
+                                                                  await hfDownload
+                                                                      .enqueueDownload(
+                                                                    f.downloadUrl,
+                                                                    f.filename,
+                                                                    hfToken: settings
+                                                                        .hfToken
+                                                                        .value,
+                                                                  );
+                                                                  Get.snackbar(
+                                                                    'Download Started',
+                                                                    'Downloading ${f.filename} via DownloadManager',
+                                                                    snackPosition:
+                                                                        SnackPosition
+                                                                            .BOTTOM,
+                                                                    duration:
+                                                                        const Duration(
+                                                                            seconds:
+                                                                                3),
+                                                                  );
+                                                                } catch (e) {
+                                                                  Get.snackbar(
+                                                                    'Download Error',
+                                                                    e.toString(),
+                                                                    snackPosition:
+                                                                        SnackPosition
+                                                                            .BOTTOM,
+                                                                  );
+                                                                }
+                                                              },
+                                                            ),
+                                                        ],
+                                                      );
+                                                    });
+                                                  },
+                                                ),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  static String _formatCount(int count) {
+    if (count >= 1000000) {
+      return '${(count / 1000000).toStringAsFixed(1)}M';
+    }
+    if (count >= 1000) {
+      return '${(count / 1000).toStringAsFixed(1)}k';
+    }
+    return count.toString();
+  }
+}
+

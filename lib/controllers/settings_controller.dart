@@ -28,6 +28,7 @@ class SettingsController extends GetxController {
   final nvidiaKey = ''.obs;
   final openRouterKey = ''.obs;
   final deepSeekKey = ''.obs;
+  final hfToken = ''.obs;
   final customCloudName = 'Custom API'.obs;
   final customCloudBaseUrl = ''.obs;
   final customCloudKey = ''.obs;
@@ -86,6 +87,7 @@ class SettingsController extends GetxController {
   final openRouterModelController = TextEditingController();
   final deepSeekModelController = TextEditingController();
   final customCloudModelController = TextEditingController();
+  final hfTokenController = TextEditingController();
 
   Timer? _apiKeyDebounceTimer;
   Timer? _modelDebounceTimer;
@@ -116,6 +118,7 @@ class SettingsController extends GetxController {
     nvidiaKeyController.dispose();
     openRouterKeyController.dispose();
     deepSeekKeyController.dispose();
+    hfTokenController.dispose();
     customCloudNameController.dispose();
     customCloudBaseUrlController.dispose();
     customCloudKeyController.dispose();
@@ -151,6 +154,7 @@ class SettingsController extends GetxController {
     nvidiaKey.value = _hive.getSetting(AppConstants.keyNvidiaKey) ?? '';
     openRouterKey.value = _hive.getSetting(AppConstants.keyOpenRouterKey) ?? '';
     deepSeekKey.value = _hive.getSetting(AppConstants.keyDeepSeekKey) ?? '';
+    hfToken.value = _hive.getSetting(AppConstants.keyHfToken) ?? '';
     customCloudName.value = _hive.getSetting(AppConstants.keyCustomCloudName,
             defaultValue: 'Custom API') ??
         'Custom API';
@@ -256,6 +260,7 @@ class SettingsController extends GetxController {
     nvidiaKeyController.text = nvidiaKey.value;
     openRouterKeyController.text = openRouterKey.value;
     deepSeekKeyController.text = deepSeekKey.value;
+    hfTokenController.text = hfToken.value;
     customCloudNameController.text = customCloudName.value;
     customCloudBaseUrlController.text = customCloudBaseUrl.value;
     customCloudKeyController.text = customCloudKey.value;
@@ -401,6 +406,13 @@ class SettingsController extends GetxController {
         await _hive.setSetting(AppConstants.keyCustomCloudKey, trimmed);
         break;
     }
+  }
+
+  Future<void> setHfToken(String key) async {
+    final trimmed = key.trim();
+    hfToken.value = trimmed;
+    hfTokenController.text = trimmed;
+    await _hive.setSetting(AppConstants.keyHfToken, trimmed);
   }
 
   void debouncedSetApiKey(String provider, String key) {

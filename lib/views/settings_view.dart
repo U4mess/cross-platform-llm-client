@@ -161,6 +161,9 @@ class SettingsView extends GetView<SettingsController> {
               _sectionLabel(context, 'IMAGE GENERATION PARAMETERS'),
               _buildImageGenerationCard(context, isDark),
               const SizedBox(height: 24),
+              _sectionLabel(context, 'HUGGING FACE ACCESS TOKEN'),
+              _buildHfTokenCard(context, isDark),
+              const SizedBox(height: 24),
               _sectionLabel(context, 'ABOUT'),
               _appleGroupedCard(context, isDark, children: [
                 Padding(
@@ -1232,6 +1235,97 @@ class SettingsView extends GetView<SettingsController> {
                     fontWeight: FontWeight.w500)),
           ],
         ]),
+      ),
+    ]);
+  }
+
+  Widget _buildHfTokenCard(BuildContext context, bool isDark) {
+    return _appleGroupedCard(context, isDark, children: [
+      Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                _iconBox(const Color(0xFFFF9500), Icons.vpn_key_rounded),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Hugging Face Access Token',
+                        style: GoogleFonts.inter(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w500,
+                          color: isDark ? Colors.white : Colors.black,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Used to download gated model weights (e.g. Llama 3, Gemma).',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: Theme.of(context).hintColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: controller.hfTokenController,
+              obscureText: true,
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                color: isDark ? Colors.white : Colors.black,
+              ),
+              decoration: InputDecoration(
+                hintText: 'hf_xxxxxxxxxxxxxxxxxxxxxxxx',
+                hintStyle: GoogleFonts.inter(
+                  fontSize: 13,
+                  color: Theme.of(context).hintColor.withValues(alpha: 0.6),
+                ),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                filled: true,
+                fillColor: isDark
+                    ? const Color(0xFF1C1C1E)
+                    : const Color(0xFFF2F2F7),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.check_circle_outline, size: 20),
+                  tooltip: 'Save Token',
+                  onPressed: () {
+                    controller.setHfToken(controller.hfTokenController.text);
+                    Get.snackbar(
+                      'Saved',
+                      'Hugging Face token updated.',
+                      snackPosition: SnackPosition.BOTTOM,
+                      duration: const Duration(seconds: 2),
+                    );
+                  },
+                ),
+              ),
+              onSubmitted: (v) {
+                controller.setHfToken(v);
+                Get.snackbar(
+                  'Saved',
+                  'Hugging Face token updated.',
+                  snackPosition: SnackPosition.BOTTOM,
+                  duration: const Duration(seconds: 2),
+                );
+              },
+              onChanged: (v) => controller.setHfToken(v),
+            ),
+          ],
+        ),
       ),
     ]);
   }

@@ -14,6 +14,23 @@ Future<String> getModelsDir() async {
   return modelsPath;
 }
 
+Future<String?> getExternalModelsDir() async {
+  try {
+    if (Platform.isAndroid) {
+      final ext = await getExternalStorageDirectory();
+      if (ext != null) {
+        final path = '${ext.path}/models';
+        final dir = Directory(path);
+        if (!await dir.exists()) {
+          await dir.create(recursive: true);
+        }
+        return path;
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
 Future<bool> isModelDownloaded(String path) async {
   return File(path).existsSync();
 }

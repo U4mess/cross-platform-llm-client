@@ -2,6 +2,8 @@
 
 Future<String> getModelsDir() async => '/web/models';
 
+Future<String?> getExternalModelsDir() async => null;
+
 Future<bool> isModelDownloaded(String path) async => false;
 
 Future<List<String>> getDownloadedModels(String modelsDir) async => [];

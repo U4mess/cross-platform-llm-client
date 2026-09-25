@@ -19,6 +19,7 @@ class AppConstants {
   static const String keyNvidiaKey = 'nvidia_api_key';
   static const String keyOpenRouterKey = 'openrouter_api_key';
   static const String keyDeepSeekKey = 'deepseek_api_key';
+  static const String keyHfToken = 'hf_token';
   static const String keyCustomCloudName = 'custom_cloud_name';
   static const String keyCustomCloudBaseUrl = 'custom_cloud_base_url';
   static const String keyCustomCloudKey = 'custom_cloud_api_key';
