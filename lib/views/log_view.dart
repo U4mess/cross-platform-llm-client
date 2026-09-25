@@ -125,7 +125,7 @@ class LogView extends StatelessWidget {
                     const SizedBox(height: 16),
                     Text('All Clear', style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w600, color: isDark ? Colors.white : Colors.black)),
                     const SizedBox(height: 6),
-                    Text('No ${selectedFilter.value == 'ALL' ? '' : selectedFilter.value.toLowerCase() + ' '}logs captured yet.', style: GoogleFonts.inter(fontSize: 15, color: Theme.of(context).hintColor)),
+                    Text('No ${selectedFilter.value == 'ALL' ? '' : '${selectedFilter.value.toLowerCase()} '}logs captured yet.', style: GoogleFonts.inter(fontSize: 15, color: Theme.of(context).hintColor)),
                   ]),
                 );
               }

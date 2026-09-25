@@ -5,7 +5,6 @@ import 'package:http/http.dart' as http;
 
 import '../controllers/server_controller.dart';
 import '../core/colors.dart';
-import '../models/server_log_entry.dart';
 
 class ServerView extends GetView<ServerController> {
   const ServerView({super.key});

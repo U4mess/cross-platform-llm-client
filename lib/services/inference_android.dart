@@ -755,11 +755,6 @@ class InferenceEngine {
 
   // ── Helpers ──
 
-  int _extractGpuModel(String gpuName) {
-    final match = RegExp(r'(\d{3})').firstMatch(gpuName.toLowerCase());
-    return match != null ? (int.tryParse(match.group(1)!) ?? 0) : 0;
-  }
-
   String _runtimeFor(String modelPath, String? modelRuntime) {
     final runtime = modelRuntime?.toLowerCase();
     if (runtime == 'litert' || runtime == 'llama') return runtime!;
