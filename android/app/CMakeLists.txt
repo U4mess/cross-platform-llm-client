@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.22.1)
 
 project(vaultlm_native)
 
+# Android ABI check: llama.cpp + Vulkan is strictly 64-bit ARM (arm64-v8a).
+# Unsupported ABIs (armeabi-v7a, x86, x86_64) must be skipped.
+if(ANDROID AND NOT ANDROID_ABI STREQUAL "arm64-v8a")
+    message(STATUS "Skipping vaultlm_native build for unsupported ABI: ${ANDROID_ABI}")
+    return()
+endif()
+
 # Set C++17
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
