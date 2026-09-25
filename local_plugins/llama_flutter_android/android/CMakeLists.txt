@@ -58,6 +58,9 @@ if(ANDROID)
             target_link_libraries(${target} PRIVATE c++_shared)
         endif()
     endforeach()
+    if(TARGET ggml-vulkan)
+        target_link_libraries(ggml-vulkan PRIVATE ${VULKAN_LIB} android log)
+    endif()
 endif()
 
 # JNI wrapper library - simplified without common library
