@@ -73,6 +73,7 @@ android {
                     "-DGGML_DOTPROD=ON",
                     "-DGGML_VULKAN=ON",
                     "-DGGML_VULKAN_CHECK_RESULTS=OFF",
+                    "-DGGML_VULKAN_COOPMAT=OFF",
                     "-DGGML_OPENMP=OFF",
                     "-DCMAKE_BUILD_PARALLEL_LEVEL=2"
                 )

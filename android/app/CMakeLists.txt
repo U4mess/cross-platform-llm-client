@@ -32,6 +32,8 @@ set(GGML_VULKAN ON CACHE BOOL "Enable Vulkan GPU backend" FORCE)
 set(GGML_VULKAN ON)
 set(GGML_VULKAN_CHECK_RESULTS OFF CACHE BOOL "Disable Vulkan check results" FORCE)
 set(GGML_VULKAN_CHECK_RESULTS OFF)
+set(GGML_VULKAN_COOPMAT OFF CACHE BOOL "Disable Vulkan cooperative matrix support on mobile" FORCE)
+set(GGML_VULKAN_COOPMAT OFF)
 
 set(GGML_CPU_AARCH64 ON CACHE BOOL "Enable ARM64 support")
 set(GGML_DOTPROD ON CACHE BOOL "Enable ARM NEON dot product")

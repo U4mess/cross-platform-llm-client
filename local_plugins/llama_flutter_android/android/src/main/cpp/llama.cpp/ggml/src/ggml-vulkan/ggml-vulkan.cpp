@@ -28,6 +28,7 @@ DispatchLoaderDynamic & ggml_vk_default_dispatcher();
 #include <spirv/unified1/spirv.hpp>
 #endif
 
+#include <stdexcept>
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
@@ -110,9 +111,10 @@ static bool is_pow2(uint32_t x) { return x > 1 && (x & (x-1)) == 0; }
     do {                                                            \
         vk::Result err_ = (err);                                    \
         if (err_ != vk::Result::eSuccess) {                         \
+            std::string err_str = to_string(err_);                  \
             fprintf(stderr, "ggml_vulkan: %s error %s at %s:%d\n",  \
-                #err, to_string(err_).c_str(), __FILE__, __LINE__); \
-            exit(1);                                                \
+                #err, err_str.c_str(), __FILE__, __LINE__);         \
+            throw std::runtime_error("ggml_vulkan error: " + err_str + " (" msg ")"); \
         }                                                           \
     } while (0)
 
@@ -2103,8 +2105,9 @@ static void ggml_vk_wait_for_fence(ggml_backend_vk_context * ctx) {
     vk::Result result;
     while ((result = ctx->device->device.getFenceStatus(ctx->fence)) != vk::Result::eSuccess) {
         if (result != vk::Result::eNotReady) {
-            fprintf(stderr, "ggml_vulkan: error %s at %s:%d\n", to_string(result).c_str(), __FILE__, __LINE__);
-            exit(1);
+            std::string err_str = to_string(result);
+            fprintf(stderr, "ggml_vulkan: error %s at %s:%d\n", err_str.c_str(), __FILE__, __LINE__);
+            throw std::runtime_error("ggml_vulkan fence error: " + err_str);
         }
         for (uint32_t i = 0; i < 100; ++i) {
             YIELD();

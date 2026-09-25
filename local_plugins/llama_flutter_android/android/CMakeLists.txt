@@ -36,6 +36,8 @@ set(GGML_VULKAN ON CACHE BOOL "Enable Vulkan GPU backend" FORCE)
 set(GGML_VULKAN ON)
 set(GGML_VULKAN_CHECK_RESULTS OFF CACHE BOOL "Disable Vulkan check results" FORCE)
 set(GGML_VULKAN_CHECK_RESULTS OFF)
+set(GGML_VULKAN_COOPMAT OFF CACHE BOOL "Disable Vulkan cooperative matrix support on mobile" FORCE)
+set(GGML_VULKAN_COOPMAT OFF)
 
 set(GGML_OPENMP OFF CACHE BOOL "Disable OpenMP to avoid packaging libomp.so" FORCE)
 set(GGML_STATIC OFF CACHE BOOL "Build as shared library")

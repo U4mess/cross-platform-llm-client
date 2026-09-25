@@ -62,17 +62,23 @@ if (Vulkan_FOUND)
     set(VULKAN_SHADER_GEN_CMAKE_ARGS "")
 
     # Test all shader extensions
-    test_shader_extension_support(
-        "GL_KHR_cooperative_matrix"
-        "${CMAKE_CURRENT_SOURCE_DIR}/vulkan-shaders/feature-tests/coopmat.comp"
-        "GGML_VULKAN_COOPMAT_GLSLC_SUPPORT"
-    )
+    if (GGML_VULKAN_COOPMAT)
+        test_shader_extension_support(
+            "GL_KHR_cooperative_matrix"
+            "${CMAKE_CURRENT_SOURCE_DIR}/vulkan-shaders/feature-tests/coopmat.comp"
+            "GGML_VULKAN_COOPMAT_GLSLC_SUPPORT"
+        )
 
-    test_shader_extension_support(
-        "GL_NV_cooperative_matrix2"
-        "${CMAKE_CURRENT_SOURCE_DIR}/vulkan-shaders/feature-tests/coopmat2.comp"
-        "GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT"
-    )
+        test_shader_extension_support(
+            "GL_NV_cooperative_matrix2"
+            "${CMAKE_CURRENT_SOURCE_DIR}/vulkan-shaders/feature-tests/coopmat2.comp"
+            "GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT"
+        )
+    else()
+        message(STATUS "Vulkan cooperative matrix shaders disabled (GGML_VULKAN_COOPMAT=OFF)")
+        set(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT OFF)
+        set(GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT OFF)
+    endif()
 
     test_shader_extension_support(
         "GL_EXT_integer_dot_product"
