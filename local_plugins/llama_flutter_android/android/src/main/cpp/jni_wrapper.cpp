@@ -701,10 +701,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
                 }
 
                 // Defensive null-check before calling sampler
-                float* logits = (batch.n_tokens > 0) ? llama_get_logits_ith(g_ctx, batch.n_tokens - 1) : nullptr;
-                if (!logits) {
-                    logits = llama_get_logits_ith(g_ctx, -1);
-                }
+                float* logits = llama_get_logits_ith(g_ctx, -1);
                 if (!logits) {
                     LOGE("Logits returned NULL! Skipping sample to prevent SIGSEGV");
                     break;
