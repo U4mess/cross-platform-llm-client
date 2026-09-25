@@ -60,6 +60,11 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Install Vulkan Shader Compiler (glslc)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glslc || sudo apt-get install -y shaderc
+
       - name: Build APK (Release, split-per-abi)
         run: flutter build apk --release --split-per-abi
 
