@@ -21,7 +21,7 @@ import kotlin.system.exitProcess
 import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONObject
 
-class MainActivity : FlutterActivity() {
+class MainActivity : com.vaultlm.app.MainActivity() {
     private val importChannelName = "com.aichat.ai_chat/model_import"
     private val importRequestCode = 4207
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -608,5 +608,9 @@ class MainActivity : FlutterActivity() {
 
     private fun sanitizeFilename(filename: String): String {
         return filename.replace(Regex("""[\\/:*?"<>|]"""), "_")
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 }
