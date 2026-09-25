@@ -985,6 +985,12 @@ class ChatController extends GetxController {
     if (generationId == _generationSerial) {
       isLoading.value = false;
       _scrollToBottom();
+      final activeReqId = Get.find<InferenceService>().activeRequestId;
+      final resetMsg = '[$activeReqId] [UIReset] state reset: isLoading=false, isStreaming=false';
+      if (Get.isRegistered<AppLogService>()) {
+        Get.find<AppLogService>().info(resetMsg);
+      }
+      print(resetMsg);
     }
   }
 
@@ -1017,6 +1023,12 @@ class ChatController extends GetxController {
     imageGenEstimatedSecs.value = 0;
     imageGenStartTime.value = null;
     imageGenDecoding.value = false;
+    final activeReqId = Get.find<InferenceService>().activeRequestId;
+    final resetMsg = '[$activeReqId] [UIReset] state reset (stop completed): isLoading=false, isStreaming=false';
+    if (Get.isRegistered<AppLogService>()) {
+      Get.find<AppLogService>().info(resetMsg);
+    }
+    print(resetMsg);
     unawaited(Get.find<InferenceService>().stopGeneration());
     Get.find<LocalImageService>().cancelGeneration();
   }

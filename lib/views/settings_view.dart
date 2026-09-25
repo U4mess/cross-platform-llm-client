@@ -28,12 +28,12 @@ class SettingsView extends GetView<SettingsController> {
                 GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 34)),
         toolbarHeight: 56,
       ),
-      body: Obx(() => ListView(
+      body: ListView(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             children: [
               const SizedBox(height: 8),
               _sectionLabel(context, 'APPEARANCE'),
-              _appleGroupedCard(context, isDark, children: [
+              Obx(() => _appleGroupedCard(context, isDark, children: [
                 for (final mode in [
                   ThemeMode.light,
                   ThemeMode.dark,
@@ -55,7 +55,7 @@ class SettingsView extends GetView<SettingsController> {
                     showDivider: mode != ThemeMode.system,
                     onTap: () => controller.setThemeMode(mode),
                   ),
-              ]),
+              ])),
               const SizedBox(height: 16),
               Obx(() => _buildFontSizeCard(context, isDark)),
               const SizedBox(height: 24),
@@ -78,7 +78,7 @@ class SettingsView extends GetView<SettingsController> {
               _buildDeviceCard(context, isDark),
               const SizedBox(height: 24),
               _sectionLabel(context, 'INFERENCE MODE'),
-              _appleGroupedCard(context, isDark, children: [
+              Obx(() => _appleGroupedCard(context, isDark, children: [
                 _appleListTile(
                   context,
                   isDark,
@@ -112,7 +112,7 @@ class SettingsView extends GetView<SettingsController> {
                   showDivider: false,
                   onTap: () => controller.setInferenceMode('cloud'),
                 ),
-              ]),
+              ])),
               const SizedBox(height: 24),
               _sectionLabel(context, 'SYSTEM PROMPT'),
               _appleGroupedCard(context, isDark, children: [
@@ -151,15 +151,15 @@ class SettingsView extends GetView<SettingsController> {
               _buildInferenceMemoryCard(context, isDark),
               const SizedBox(height: 24),
               _sectionLabel(context, 'CPU & PERFORMANCE TUNING'),
-              _buildCpuPerformanceCard(context, isDark),
+              Obx(() => _buildCpuPerformanceCard(context, isDark)),
               const SizedBox(height: 24),
               _sectionLabel(context, 'MODEL PARAMETERS'),
-              _buildLiteRtCard(context, isDark),
+              Obx(() => _buildLiteRtCard(context, isDark)),
               const SizedBox(height: 10),
-              _buildModelParametersCard(context, isDark),
+              Obx(() => _buildModelParametersCard(context, isDark)),
               const SizedBox(height: 24),
               _sectionLabel(context, 'IMAGE GENERATION PARAMETERS'),
-              _buildImageGenerationCard(context, isDark),
+              Obx(() => _buildImageGenerationCard(context, isDark)),
               const SizedBox(height: 24),
               _sectionLabel(context, 'HUGGING FACE ACCESS TOKEN'),
               _buildHfTokenCard(context, isDark),
@@ -190,20 +190,20 @@ class SettingsView extends GetView<SettingsController> {
                               style: GoogleFonts.inter(
                                   fontSize: 17, fontWeight: FontWeight.w600)),
                           const SizedBox(height: 2),
-                          Text(
+                          Obx(() => Text(
                               controller.appVersion.value.isEmpty
                                   ? 'Version unavailable · by U4mess'
                                   : 'v${controller.appVersion.value} · by U4mess',
                               style: GoogleFonts.inter(
                                   fontSize: 13,
-                                  color: Theme.of(context).hintColor)),
+                                  color: Theme.of(context).hintColor))),
                         ]),
                   ]),
                 ),
               ]),
               const SizedBox(height: 40),
             ],
-          )),
+          ),
     );
   }
 

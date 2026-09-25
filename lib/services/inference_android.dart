@@ -3,6 +3,8 @@ import 'dart:io' show Platform, Directory;
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_litert_lm/flutter_litert_lm.dart';
 import 'package:llama_flutter_android/llama_flutter_android.dart';
+import 'package:get/get.dart';
+import 'app_log_service.dart';
 
 /// Whether the current platform supports local inference.
 bool get supportsLocalInference => Platform.isAndroid || Platform.isIOS;
@@ -40,6 +42,7 @@ class InferenceEngine {
   String? _liteConversationSystemPrompt;
   double? _liteConversationTemperature;
   bool _liteConversationHasMessages = false;
+  String _activeRequestId = 'req_#0';
 
   Future<LoadResult> loadModel({
     required String modelPath,
@@ -310,6 +313,7 @@ class InferenceEngine {
 
   Future<String> generate({
     required String prompt,
+    String? requestId,
     List<Map<String, String>>? conversationHistory,
     required String systemPrompt,
     required String modelName,
@@ -319,6 +323,10 @@ class InferenceEngine {
     String? audioPath,
     void Function(String token)? onToken,
   }) async {
+    final req = requestId ?? 'req_#0';
+    _activeRequestId = req;
+    final reqStartTime = DateTime.now();
+
     if (_isLiteRt) {
       return _generateLiteRt(
         prompt: prompt,
@@ -366,7 +374,7 @@ class InferenceEngine {
           imagePath: imagePath);
       stream = _controller!.generateChat(
         messages: messages,
-        template: null,
+        template: 'REQ:$req',
         maxTokens: maxTokens,
         temperature: temperature,
         topP: 0.9,
@@ -375,9 +383,8 @@ class InferenceEngine {
         repeatPenalty: 1.1,
         repeatLastN: 64,
       );
-      print('[Inference] generateChat() started (${messages.length} messages)');
     } catch (e) {
-      print('[Inference] generateChat() failed: $e — fallback to generate()');
+      print('[$req] generateChat() failed: $e — fallback to generate()');
       try {
         await _controller!.stop();
       } catch (_) {}
@@ -399,8 +406,21 @@ class InferenceEngine {
     int tokenCount = 0;
     _subscription = stream.listen(
       (token) {
+        if (token.startsWith('[STAGE]: ')) {
+          final stageMsg = token.substring(9).trim();
+          if (Get.isRegistered<AppLogService>()) {
+            Get.find<AppLogService>().info(stageMsg);
+          }
+          print(stageMsg);
+          return;
+        }
         if (tokenCount == 0) {
-          print('[Inference] [${DateTime.now().toIso8601String()}] ✓ FIRST TOKEN received! Prefill done.');
+          final elapsed = DateTime.now().difference(reqStartTime).inMilliseconds / 1000.0;
+          final firstTokenMsg = '[$req] [FirstTokenReceived] elapsed=${elapsed.toStringAsFixed(2)}s from send';
+          if (Get.isRegistered<AppLogService>()) {
+            Get.find<AppLogService>().info(firstTokenMsg);
+          }
+          print(firstTokenMsg);
         }
         final clean = _sanitizeGemmaGarbage(token);
         if (clean.isEmpty) return;
@@ -408,17 +428,30 @@ class InferenceEngine {
         tokenCount++;
         onToken?.call(clean);
         _idleTimer?.cancel();
-        _idleTimer = Timer(const Duration(seconds: 5), () {
-          print('[Inference] [${DateTime.now().toIso8601String()}] Idle timeout — $tokenCount tokens');
+        _idleTimer = Timer(const Duration(seconds: 15), () {
+          final idleMsg = '[$req] [IdleTimeout] timeout after $tokenCount tokens';
+          if (Get.isRegistered<AppLogService>()) {
+            Get.find<AppLogService>().info(idleMsg);
+          }
+          print(idleMsg);
           finish(buffer.toString());
         });
       },
       onDone: () {
-        print('[Inference] [${DateTime.now().toIso8601String()}] Stream onDone — $tokenCount tokens total');
+        final totalElapsed = DateTime.now().difference(reqStartTime).inMilliseconds / 1000.0;
+        final doneMsg = '[$req] [Terminal] onDone received: $tokenCount tokens, total=${totalElapsed.toStringAsFixed(2)}s';
+        if (Get.isRegistered<AppLogService>()) {
+          Get.find<AppLogService>().info(doneMsg);
+        }
+        print(doneMsg);
         finish(buffer.toString());
       },
       onError: (error) {
-        print('[Inference] [${DateTime.now().toIso8601String()}] Stream error: $error');
+        final errMsg = '[$req] [Terminal] onError received: $error';
+        if (Get.isRegistered<AppLogService>()) {
+          Get.find<AppLogService>().error(errMsg);
+        }
+        print(errMsg);
         finish('ERROR: Generation failed — $error');
       },
     );
@@ -637,7 +670,11 @@ class InferenceEngine {
 
   Future<void> stop() async {
     if (_disposed) return;
-    print('[Inference] [${DateTime.now().toIso8601String()}] Stop requested in InferenceEngine');
+    final stopMsg = '[$_activeRequestId] [Stop] Stop requested in InferenceEngine';
+    if (Get.isRegistered<AppLogService>()) {
+      Get.find<AppLogService>().info(stopMsg);
+    }
+    print(stopMsg);
     _idleTimer?.cancel();
     final stopCallback = _onStop;
     _onStop = null;
@@ -650,7 +687,11 @@ class InferenceEngine {
     try {
       await _controller?.stop().timeout(const Duration(milliseconds: 800));
     } catch (_) {}
-    print('[Inference] [${DateTime.now().toIso8601String()}] Stop completed in InferenceEngine');
+    final stopDoneMsg = '[$_activeRequestId] [Stop] Stop completed in InferenceEngine';
+    if (Get.isRegistered<AppLogService>()) {
+      Get.find<AppLogService>().info(stopDoneMsg);
+    }
+    print(stopDoneMsg);
   }
 
   /// Reset any persistent conversation state so the next generation

@@ -80,6 +80,14 @@ static bool g_context_shift = true;
 static std::mutex g_load_log_mutex;
 static std::string g_load_error;
 static bool g_capture_load_error = false;
+static std::mutex g_active_req_mutex;
+static std::string g_active_req_id = "req_#0";
+
+static std::string formatDouble(double val, int decimals) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%.*f", decimals, val);
+    return std::string(buf);
+}
 
 static std::string currentTimestamp() {
     struct timespec ts;
@@ -518,18 +526,28 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
 extern "C" JNIEXPORT void JNICALL
 Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenerate(
     JNIEnv* env, jobject thiz,
-    jstring prompt, jlong max_tokens, 
+    jstring prompt, jstring request_id, jlong max_tokens, 
     jdouble temperature, jdouble top_p, jlong top_k, jdouble min_p, jdouble typical_p,
     jdouble repeat_penalty, jdouble frequency_penalty, jdouble presence_penalty, jlong repeat_last_n,
     jlong mirostat, jdouble mirostat_tau, jdouble mirostat_eta,
     jlong seed, jboolean penalize_newline,
     jobject token_callback) {
 
+    const char* raw_req = env->GetStringUTFChars(request_id, nullptr);
+    std::string req_id = raw_req ? raw_req : "req_#0";
+    if (raw_req) {
+        env->ReleaseStringUTFChars(request_id, raw_req);
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_active_req_mutex);
+        g_active_req_id = req_id;
+    }
+
     const std::string ts_start = currentTimestamp();
-    LOGI("[%s] nativeGenerate called (max_tokens=%lld)", ts_start.c_str(), (long long)max_tokens);
+    LOGI("[%s] [%s] nativeGenerate called (max_tokens=%lld)", ts_start.c_str(), req_id.c_str(), (long long)max_tokens);
 
     if (g_is_generating.exchange(true)) {
-        LOGE("[%s] nativeGenerate rejected: generation already active!", currentTimestamp().c_str());
+        LOGE("[%s] [%s] nativeGenerate rejected: generation already active!", currentTimestamp().c_str(), req_id.c_str());
         jclass callbackClass = env->GetObjectClass(token_callback);
         jmethodID invokeMethod = env->GetMethodID(callbackClass, "invoke", "(Ljava/lang/Object;)Ljava/lang/Object;");
         jstring err_str = env->NewStringUTF("[ERROR]: Already generating");
@@ -550,8 +568,15 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
     jclass callbackClass = env->GetObjectClass(token_callback);
     jmethodID invokeMethod = env->GetMethodID(callbackClass, "invoke", "(Ljava/lang/Object;)Ljava/lang/Object;");
 
+    auto emit_stage = [&](const std::string& msg) {
+        std::string full_stage = "[STAGE]: " + msg;
+        jstring s_str = env->NewStringUTF(full_stage.c_str());
+        env->CallObjectMethod(token_callback, invokeMethod, s_str);
+        env->DeleteLocalRef(s_str);
+    };
+
     if (!g_model || !g_ctx || !g_vocab) {
-        LOGE("[%s] Model not loaded in nativeGenerate", currentTimestamp().c_str());
+        LOGE("[%s] [%s] Model not loaded in nativeGenerate", currentTimestamp().c_str(), req_id.c_str());
         jstring err_str = env->NewStringUTF("[ERROR]: Model not loaded");
         env->CallObjectMethod(token_callback, invokeMethod, err_str);
         env->DeleteLocalRef(err_str);
@@ -563,6 +588,13 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
     setpriority(PRIO_PROCESS, 0, 10);
     g_stop_flag.store(false);
 
+    auto req_start_time = std::chrono::steady_clock::now();
+    int active_threads = g_ctx ? llama_n_threads(g_ctx) : 0;
+    LOGI("[%s] [%s] [NativeStart] max_tokens=%lld, temp=%.2f, top_p=%.2f, threads=%d",
+         currentTimestamp().c_str(), req_id.c_str(), (long long)max_tokens, temperature, top_p, active_threads);
+    emit_stage("[" + req_id + "] [NativeStart] max_tokens=" + std::to_string(max_tokens) +
+               ", temp=" + formatDouble(temperature, 2) + ", threads=" + std::to_string(active_threads));
+
     const char* raw_prompt = env->GetStringUTFChars(prompt, nullptr);
     std::string prompt_str = raw_prompt ? raw_prompt : "";
     if (raw_prompt) {
@@ -571,14 +603,14 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
 
     try {
         const int prompt_len = (int)prompt_str.length();
-        LOGI("[%s] Tokenizing prompt (length: %d)", currentTimestamp().c_str(), prompt_len);
+        LOGI("[%s] [%s] Tokenizing prompt (length: %d chars)", currentTimestamp().c_str(), req_id.c_str(), prompt_len);
 
         std::string sanitized_prompt = sanitizeUTF8(prompt_str.c_str(), prompt_len);
         const char* sanitized_cstr = sanitized_prompt.c_str();
         const int sanitized_len = (int)sanitized_prompt.length();
 
         const int n_prompt_tokens = -llama_tokenize(g_vocab, sanitized_cstr, sanitized_len, nullptr, 0, true, true);
-        LOGI("[%s] Token count: %d", currentTimestamp().c_str(), n_prompt_tokens);
+        LOGI("[%s] [%s] Prompt tokenized into %d tokens", currentTimestamp().c_str(), req_id.c_str(), n_prompt_tokens);
 
         if (n_prompt_tokens <= 0) {
             throw std::runtime_error("Failed to tokenize prompt (got " + std::to_string(n_prompt_tokens) + " tokens)");
@@ -595,8 +627,8 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
         // Context shifting: handle prompts exceeding maximum context window
         if (g_context_shift && (int)tokens.size() >= n_ctx) {
             const int max_prompt_tokens = std::max(1, n_ctx - 64);
-            LOGW("[%s] Prompt token count (%zu) exceeds context size (%d); sliding prompt window to %d tokens",
-                 currentTimestamp().c_str(), tokens.size(), n_ctx, max_prompt_tokens);
+            LOGW("[%s] [%s] Prompt token count (%zu) exceeds context size (%d); sliding prompt window to %d tokens",
+                 currentTimestamp().c_str(), req_id.c_str(), tokens.size(), n_ctx, max_prompt_tokens);
             const int excess = (int)tokens.size() - max_prompt_tokens;
             tokens.erase(tokens.begin(), tokens.begin() + excess);
             llama_memory_clear(llama_get_memory(g_ctx), true);
@@ -609,19 +641,20 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
                 int n_needed = (g_n_past.load() + (int)tokens.size()) - n_ctx;
                 int n_discard = std::max(n_needed, n_ctx / 4);
                 if (n_discard >= g_n_past.load()) {
-                    LOGI("[%s] Prompt requires clearing previous KV cache (g_n_past=%d, tokens=%zu, n_ctx=%d)",
-                         currentTimestamp().c_str(), g_n_past.load(), tokens.size(), n_ctx);
+                    LOGI("[%s] [%s] Prompt requires clearing previous KV cache (g_n_past=%d, tokens=%zu, n_ctx=%d)",
+                         currentTimestamp().c_str(), req_id.c_str(), g_n_past.load(), tokens.size(), n_ctx);
                     llama_memory_clear(llama_get_memory(g_ctx), true);
                     g_n_past.store(0);
                 } else {
-                    LOGI("[%s] Context is full, shifting KV cache by %d tokens", currentTimestamp().c_str(), n_discard);
+                    LOGI("[%s] [%s] Context full, shifting KV cache by %d tokens",
+                         currentTimestamp().c_str(), req_id.c_str(), n_discard);
                     llama_memory_seq_rm(llama_get_memory(g_ctx), 0, 0, n_discard);
                     llama_memory_seq_add(llama_get_memory(g_ctx), 0, n_discard, g_n_past.load(), -n_discard);
                     g_n_past.fetch_sub(n_discard);
                 }
             } else {
-                LOGW("[%s] Context full and context shift disabled: g_n_past=%d, tokens=%zu, n_ctx=%d",
-                     currentTimestamp().c_str(), g_n_past.load(), tokens.size(), n_ctx);
+                LOGW("[%s] [%s] Context full and context shift disabled: g_n_past=%d, tokens=%zu, n_ctx=%d",
+                     currentTimestamp().c_str(), req_id.c_str(), g_n_past.load(), tokens.size(), n_ctx);
             }
         }
 
@@ -630,8 +663,14 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
         ScopedBatch scoped_batch(max_batch_size, 0, 1);
         llama_batch& batch = scoped_batch.batch;
 
-        LOGI("[%s] Prompt decode start: %zu tokens", currentTimestamp().c_str(), tokens.size());
+        auto prefill_start_time = std::chrono::steady_clock::now();
+        LOGI("[%s] [%s] [PrefillStart] prompt_tokens=%zu, batch_size=%d",
+             currentTimestamp().c_str(), req_id.c_str(), tokens.size(), max_batch_size);
+        emit_stage("[" + req_id + "] [PrefillStart] prompt_tokens=" + std::to_string(tokens.size()) +
+                   ", batch_size=" + std::to_string(max_batch_size));
 
+        int last_decode_result = 0;
+        int batch_idx = 0;
         while (tokens_processed < (int)tokens.size() && !g_stop_flag.load()) {
             batch.n_tokens = 0;
             int batch_size = std::min((int)tokens.size() - tokens_processed, max_batch_size);
@@ -650,24 +689,35 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
                 batch.logits[batch.n_tokens - 1] = true;
             }
 
-            LOGI("[%s] Decoding prompt batch: g_n_past=%d, batch_size=%d",
-                 currentTimestamp().c_str(), g_n_past.load() + tokens_processed, batch.n_tokens);
-            int decode_result = llama_decode(g_ctx, batch);
-            if (decode_result != 0) {
-                if (g_stop_flag.load() || decode_result == 2) {
-                    LOGI("[%s] Prompt decode aborted by stop signal", currentTimestamp().c_str());
+            LOGI("[%s] [%s] [PrefillBatch] batch=%d, g_n_past=%d, batch_size=%d",
+                 currentTimestamp().c_str(), req_id.c_str(), batch_idx++, g_n_past.load() + tokens_processed, batch.n_tokens);
+            last_decode_result = llama_decode(g_ctx, batch);
+            if (last_decode_result != 0) {
+                if (g_stop_flag.load() || last_decode_result == 2) {
+                    LOGI("[%s] [%s] Prompt decode aborted by stop signal (code %d)",
+                         currentTimestamp().c_str(), req_id.c_str(), last_decode_result);
                     break;
                 }
-                LOGE("❌ DECODE FAILED! Result code: %d", decode_result);
-                throw std::runtime_error("Failed to decode prompt batch (code " + std::to_string(decode_result) + ")");
+                LOGE("[%s] [%s] ❌ DECODE FAILED! Result code: %d",
+                     currentTimestamp().c_str(), req_id.c_str(), last_decode_result);
+                throw std::runtime_error("Failed to decode prompt batch (code " + std::to_string(last_decode_result) + ")");
             }
             tokens_processed += batch_size;
         }
 
-        LOGI("[%s] Prompt decode end: %d tokens processed", currentTimestamp().c_str(), tokens_processed);
+        auto prefill_end_time = std::chrono::steady_clock::now();
+        double prefill_elapsed_s = std::chrono::duration<double>(prefill_end_time - prefill_start_time).count();
+        double prefill_tps = (prefill_elapsed_s > 0) ? (tokens_processed / prefill_elapsed_s) : 0.0;
+        LOGI("[%s] [%s] [PrefillEnd] tokens=%d, elapsed=%.2fs (%.1f t/s), code=%d",
+             currentTimestamp().c_str(), req_id.c_str(), tokens_processed, prefill_elapsed_s, prefill_tps, last_decode_result);
+        emit_stage("[" + req_id + "] [PrefillEnd] tokens=" + std::to_string(tokens_processed) +
+                   ", elapsed=" + formatDouble(prefill_elapsed_s, 2) + "s (" + formatDouble(prefill_tps, 1) + " t/s), code=" + std::to_string(last_decode_result));
 
         if (g_stop_flag.load()) {
-            LOGI("[%s] Stop observed after prompt decode -> sending [DONE]", currentTimestamp().c_str());
+            LOGI("[%s] [%s] [Terminal] Stopped during prefill -> sending [DONE]",
+                 currentTimestamp().c_str(), req_id.c_str());
+            emit_stage("[" + req_id + "] [Terminal] reason=STOP_PREFILL, tokens=" + std::to_string(tokens_processed) +
+                       ", elapsed=" + formatDouble(prefill_elapsed_s, 2) + "s");
             jstring done_str = env->NewStringUTF("[DONE]");
             env->CallObjectMethod(token_callback, invokeMethod, done_str);
             env->DeleteLocalRef(done_str);
@@ -675,7 +725,6 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
             return;
         }
 
-        LOGI("[%s] ✅ Prompt decode successful! Total tokens: %d", currentTimestamp().c_str(), tokens_processed);
         g_n_past.fetch_add(tokens.size());
 
         // Create sampler chain with all parameters
@@ -730,20 +779,24 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
 
         llama_sampler_chain_add(g_sampler, llama_sampler_init_dist(sampler_seed));
 
-        LOGI("[%s] Starting generation loop: max_tokens=%lld", currentTimestamp().c_str(), (long long)max_tokens);
+        LOGI("[%s] [%s] Starting generation loop: max_tokens=%lld",
+             currentTimestamp().c_str(), req_id.c_str(), (long long)max_tokens);
         bool first_token = true;
+        int generated_tokens = 0;
+        bool is_eos = false;
+
         for (int i = 0; i < max_tokens && !g_stop_flag.load(); i++) {
             if (g_n_past.load() >= n_ctx) {
                 if (g_context_shift) {
                     const int n_discard = std::max(1, n_ctx / 4);
-                    LOGI("[%s] Generation reached context limit (%d), shifting KV cache by %d tokens",
-                         currentTimestamp().c_str(), g_n_past.load(), n_discard);
+                    LOGI("[%s] [%s] Context limit reached (%d), shifting KV cache by %d tokens",
+                         currentTimestamp().c_str(), req_id.c_str(), g_n_past.load(), n_discard);
                     llama_memory_seq_rm(llama_get_memory(g_ctx), 0, 0, n_discard);
                     llama_memory_seq_add(llama_get_memory(g_ctx), 0, n_discard, g_n_past.load(), -n_discard);
                     g_n_past.fetch_sub(n_discard);
                 } else {
-                    LOGW("[%s] Generation reached context limit (%d) and context shift disabled; stopping",
-                         currentTimestamp().c_str(), g_n_past.load());
+                    LOGW("[%s] [%s] Context limit reached (%d) and context shift disabled; stopping",
+                         currentTimestamp().c_str(), req_id.c_str(), g_n_past.load());
                     break;
                 }
             }
@@ -751,20 +804,28 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
             // Defensive null-check before calling sampler
             float* logits = llama_get_logits_ith(g_ctx, -1);
             if (!logits) {
-                LOGE("[%s] Logits returned NULL! Skipping sample to prevent crash", currentTimestamp().c_str());
+                LOGE("[%s] [%s] Logits returned NULL! Skipping sample to prevent crash",
+                     currentTimestamp().c_str(), req_id.c_str());
                 break;
             }
 
             llama_token new_token_id = llama_sampler_sample(g_sampler, g_ctx, -1);
 
             if (first_token) {
-                LOGI("[%s] First token sampled (token_id=%d)", currentTimestamp().c_str(), new_token_id);
+                auto first_token_time = std::chrono::steady_clock::now();
+                double first_token_s = std::chrono::duration<double>(first_token_time - req_start_time).count();
+                LOGI("[%s] [%s] [FirstToken] token_id=%d, elapsed=%.2fs",
+                     currentTimestamp().c_str(), req_id.c_str(), new_token_id, first_token_s);
+                emit_stage("[" + req_id + "] [FirstToken] token_id=" + std::to_string(new_token_id) +
+                           ", elapsed=" + formatDouble(first_token_s, 2) + "s");
                 first_token = false;
             }
 
             // Break immediately on EOS
             if (llama_vocab_is_eog(g_vocab, new_token_id)) {
-                LOGI("[%s] EOS token detected, ending generation.", currentTimestamp().c_str());
+                LOGI("[%s] [%s] EOS token detected (%d), ending generation.",
+                     currentTimestamp().c_str(), req_id.c_str(), new_token_id);
+                is_eos = true;
                 break;
             }
 
@@ -778,22 +839,23 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
             jstring token_str = env->NewStringUTF(piece.c_str());
             env->CallObjectMethod(token_callback, invokeMethod, token_str);
             env->DeleteLocalRef(token_str);
+            generated_tokens++;
 
             if (env->ExceptionCheck()) {
                 env->ExceptionDescribe();
                 env->ExceptionClear();
-                LOGW("[%s] Exception detected in token callback; stopping generation", currentTimestamp().c_str());
+                LOGW("[%s] [%s] Exception detected in token callback; stopping generation",
+                     currentTimestamp().c_str(), req_id.c_str());
                 g_stop_flag.store(true);
                 break;
             }
 
             if (g_stop_flag.load()) {
-                LOGI("[%s] Cancellation observed in loop", currentTimestamp().c_str());
+                LOGI("[%s] [%s] Cancellation observed in loop", currentTimestamp().c_str(), req_id.c_str());
                 break;
             }
 
             // Autoregressive decode advances position:
-            // Place next token at g_n_past, decode, then increment g_n_past
             batch.n_tokens = 1;
             batch.token[0] = new_token_id;
             batch.pos[0] = g_n_past.load();
@@ -804,27 +866,39 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
             int decode_res = llama_decode(g_ctx, batch);
             if (decode_res != 0) {
                 if (g_stop_flag.load() || decode_res == 2) {
-                    LOGI("[%s] Decode aborted by stop signal", currentTimestamp().c_str());
+                    LOGI("[%s] [%s] Decode aborted by stop signal", currentTimestamp().c_str(), req_id.c_str());
                 } else {
-                    LOGE("[%s] Failed to decode after sampling token %d (res=%d)", currentTimestamp().c_str(), i + 1, decode_res);
+                    LOGE("[%s] [%s] Failed to decode token %d (res=%d)",
+                         currentTimestamp().c_str(), req_id.c_str(), i + 1, decode_res);
                 }
                 break;
             }
             g_n_past.fetch_add(1);
         }
-        LOGI("[%s] Generation loop finished. Dispatching [DONE]", currentTimestamp().c_str());
+
+        auto req_end_time = std::chrono::steady_clock::now();
+        double total_elapsed_s = std::chrono::duration<double>(req_end_time - req_start_time).count();
+        double gen_tps = (total_elapsed_s > 0) ? (generated_tokens / total_elapsed_s) : 0.0;
+        const char* term_reason = g_stop_flag.load() ? "STOP" : (is_eos ? "EOS" : "MAX_TOKENS");
+        LOGI("[%s] [%s] [Terminal] reason=%s, generated_tokens=%d, elapsed=%.2fs (%.1f t/s)",
+             currentTimestamp().c_str(), req_id.c_str(), term_reason, generated_tokens, total_elapsed_s, gen_tps);
+        emit_stage("[" + req_id + "] [Terminal] reason=" + std::string(term_reason) +
+                   ", generated_tokens=" + std::to_string(generated_tokens) +
+                   ", elapsed=" + formatDouble(total_elapsed_s, 2) + "s (" + formatDouble(gen_tps, 1) + " t/s)");
 
         jstring done_str = env->NewStringUTF("[DONE]");
         env->CallObjectMethod(token_callback, invokeMethod, done_str);
         env->DeleteLocalRef(done_str);
 
     } catch (const std::exception& e) {
-        LOGE("[%s] Native inference failed: %s", currentTimestamp().c_str(), e.what());
+        LOGE("[%s] [%s] Native inference failed: %s", currentTimestamp().c_str(), req_id.c_str(), e.what());
+        emit_stage("[" + req_id + "] [Terminal] reason=ERROR, message=" + std::string(e.what()));
         jstring err_str = env->NewStringUTF((std::string("[ERROR]: ") + e.what()).c_str());
         env->CallObjectMethod(token_callback, invokeMethod, err_str);
         env->DeleteLocalRef(err_str);
     } catch (...) {
-        LOGE("[%s] Native inference failed with unknown error", currentTimestamp().c_str());
+        LOGE("[%s] [%s] Native inference failed with unknown error", currentTimestamp().c_str(), req_id.c_str());
+        emit_stage("[" + req_id + "] [Terminal] reason=UNKNOWN_ERROR");
         jstring err_str = env->NewStringUTF("[ERROR]: Unknown native error");
         env->CallObjectMethod(token_callback, invokeMethod, err_str);
         env->DeleteLocalRef(err_str);
@@ -836,7 +910,13 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
 extern "C" JNIEXPORT void JNICALL
 Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeStop(
     JNIEnv* env, jobject thiz) {
-    LOGI("[%s] nativeStop called -> setting g_stop_flag = true", currentTimestamp().c_str());
+    std::string current_id;
+    {
+        std::lock_guard<std::mutex> lock(g_active_req_mutex);
+        current_id = g_active_req_id;
+    }
+    LOGI("[%s] [%s] [Stop] nativeStop called -> setting g_stop_flag = true",
+         currentTimestamp().c_str(), current_id.c_str());
     g_stop_flag.store(true);
 }
 

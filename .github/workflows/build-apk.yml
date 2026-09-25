@@ -60,6 +60,9 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Run Flutter Analyze
+        run: flutter analyze
+
       - name: Install Vulkan Shader Compiler (glslc)
         run: |
           sudo apt-get update

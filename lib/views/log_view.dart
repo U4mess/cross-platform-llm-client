@@ -71,11 +71,9 @@ class LogView extends StatelessWidget {
           Container(
             height: 52,
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Obx(() => ListView.builder(
+            child: Obx(() => ListView(
               scrollDirection: Axis.horizontal,
-              itemCount: filters.length,
-              itemBuilder: (context, index) {
-                final filter = filters[index];
+              children: filters.map((filter) {
                 final isSelected = selectedFilter.value == filter;
                 final color = filter == 'ALL'
                     ? (isDark ? Colors.white : Colors.black)
@@ -102,7 +100,7 @@ class LogView extends StatelessWidget {
                     visualDensity: VisualDensity.compact,
                   ),
                 );
-              },
+              }).toList(),
             )),
           ),
           // Log list

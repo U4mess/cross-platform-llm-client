@@ -42,6 +42,10 @@ class InferenceService extends GetxService {
   // Platform-specific engine
   platform.InferenceEngine? _engine;
   String _sessionNativeRuntime = '';
+  static int _reqCounter = 0;
+  String _activeRequestId = 'req_#0';
+
+  String get activeRequestId => _activeRequestId;
 
   String get sessionNativeRuntime => _sessionNativeRuntime;
 
@@ -365,11 +369,22 @@ class InferenceService extends GetxService {
       }
     }
 
+    final reqId = 'req_#${++_reqCounter}';
+    _activeRequestId = reqId;
     isGenerating.value = true;
     tokenCount.value = 0;
     tokensPerSecond.value = 0.0;
     generationSource.value = source;
     streamingText.value = '';
+
+    final backend = loadedBackend.value.isNotEmpty
+        ? loadedBackend.value
+        : (gpuLayersUsed.value > 0 ? 'gpu' : 'cpu');
+    final sendMsg = '[$reqId] [Send] model=${loadedModelName.value}, runtime=${loadedModelRuntime.value}, backend=$backend, history_len=${conversationHistory?.length ?? 0}';
+    if (Get.isRegistered<AppLogService>()) {
+      Get.find<AppLogService>().info(sendMsg);
+    }
+    print(sendMsg);
 
     final startTime = DateTime.now();
     DateTime? firstVisibleTokenAt;
@@ -398,6 +413,7 @@ class InferenceService extends GetxService {
 
       final result = await _engine!.generate(
         prompt: prompt,
+        requestId: reqId,
         conversationHistory: conversationHistory,
         systemPrompt: systemPrompt ?? AppConstants.systemPrompt,
         modelName: loadedModelName.value,
@@ -456,12 +472,17 @@ class InferenceService extends GetxService {
       streamingText.value = '';
       tokenFlushTimer?.cancel();
       flushTokenBuffer();
-      Get.find<AppLogService>().error('Local generation failed', details: e);
+      Get.find<AppLogService>().error('[$reqId] [Terminal] Local generation failed', details: e);
       return 'ERROR: $e';
     }
   }
 
   Future<void> stopGeneration() async {
+    final stopMsg = '[$_activeRequestId] [Stop] Stop requested by user (is_generating=${isGenerating.value})';
+    if (Get.isRegistered<AppLogService>()) {
+      Get.find<AppLogService>().info(stopMsg);
+    }
+    print(stopMsg);
     isGenerating.value = false;
     tokenCount.value = 0;
     generationSource.value = '';
