@@ -150,9 +150,6 @@ class SettingsView extends GetView<SettingsController> {
               _sectionLabel(context, 'INFERENCE & MEMORY'),
               _buildInferenceMemoryCard(context, isDark),
               const SizedBox(height: 24),
-              _sectionLabel(context, 'HARDWARE ACCELERATION'),
-              _buildHardwareAccelerationCard(context, isDark),
-              const SizedBox(height: 24),
               _sectionLabel(context, 'CPU & PERFORMANCE TUNING'),
               _buildCpuPerformanceCard(context, isDark),
               const SizedBox(height: 24),
@@ -449,125 +446,6 @@ class SettingsView extends GetView<SettingsController> {
           onTap: () => controller.setLiteRtPerformanceMode(modes[i].value),
         ),
     ]);
-  }
-
-  Widget _buildHardwareAccelerationCard(BuildContext context, bool isDark) {
-    final isGpuEnabled = controller.gpuAcceleration.value;
-    final accent = isDark ? const Color(0xFF0A84FF) : AppColors.primary;
-    return _appleGroupedCard(context, isDark, children: [
-      SwitchListTile(
-        secondary: _iconBox(
-          const Color(0xFF34C759),
-          Icons.speed_rounded,
-        ),
-        title: Text(
-          'GPU Acceleration (Vulkan / Adreno)',
-          style: GoogleFonts.inter(
-            fontSize: 15,
-            fontWeight: FontWeight.w400,
-            color: isDark ? Colors.white : Colors.black,
-          ),
-        ),
-        subtitle: Text(
-          'Offloads transformer layers to the mobile GPU for significantly faster inference (35-50+ t/s).',
-          style: GoogleFonts.inter(
-            fontSize: 12,
-            color: Theme.of(context).hintColor,
-          ),
-        ),
-        value: isGpuEnabled,
-        activeColor: accent,
-        onChanged: (bool value) => controller.setGpuAcceleration(value),
-      ),
-      if (isGpuEnabled) ...[
-        _parameterDivider(isDark),
-        _gpuLayersSlider(
-          context,
-          isDark,
-          value: controller.gpuLayers.value,
-          onChanged: (v) => controller.updateGpuLayers(v),
-          onChangeEnd: (v) => controller.setGpuLayers(v),
-        ),
-      ],
-    ]);
-  }
-
-  Widget _gpuLayersSlider(
-    BuildContext context,
-    bool isDark, {
-    required int value,
-    required ValueChanged<int> onChanged,
-    required ValueChanged<int> onChangeEnd,
-  }) {
-    final accent = isDark ? const Color(0xFF0A84FF) : AppColors.primary;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              _iconBox(const Color(0xFFFF9500), Icons.layers_rounded),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'GPU Offload Layers',
-                      style: GoogleFonts.inter(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w400,
-                        color: isDark ? Colors.white : Colors.black,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Set to 99 to fully offload all layers into GPU VRAM.',
-                      style: GoogleFonts.inter(
-                        fontSize: 12,
-                        color: Theme.of(context).hintColor,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: accent.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  '$value',
-                  style: GoogleFonts.inter(
-                    fontSize: 13,
-                    color: accent,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          Slider(
-            value: value.toDouble().clamp(0.0, 99.0),
-            min: 0.0,
-            max: 99.0,
-            divisions: 99,
-            activeColor: accent,
-            onChanged: (v) {
-              HapticFeedback.selectionClick();
-              onChanged(v.toInt());
-            },
-            onChangeEnd: (v) {
-              onChangeEnd(v.toInt());
-            },
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _buildCpuPerformanceCard(BuildContext context, bool isDark) {
