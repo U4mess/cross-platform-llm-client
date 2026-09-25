@@ -38,6 +38,9 @@ public class LlamaFlutterAndroidPlugin: NSObject, FlutterPlugin, LlamaHostApi {
                         nGpuLayers: Int32(config.nGpuLayers ?? 99),
                         kvQuantization: config.kvQuantization,
                         contextShift: config.contextShift ?? true,
+                        nThreadsBatch: Int32(config.nThreadsBatch ?? config.nThreads),
+                        nBatch: Int32(config.nBatch ?? 512),
+                        nUbatch: Int32(config.nUbatch ?? config.nBatch ?? 512),
                         progressCallback: { [weak self] progress in
                             DispatchQueue.main.async {
                                 self?.flutterApi?.onLoadProgress(progress: progress) { _ in }
@@ -214,5 +217,13 @@ public class LlamaFlutterAndroidPlugin: NSObject, FlutterPlugin, LlamaHostApi {
             recommendedGpuLayers: 99
         )
         completion(.success(info))
+    }
+
+    func setNThreads(threads: Int64, batchThreads: Int64, completion: @escaping (Result<Void, Error>) -> Void) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            self.wrapper.setNThreads(Int32(threads), nThreadsBatch: Int32(batchThreads))
+            DispatchQueue.main.async { completion(.success(())) }
+        }
     }
 }

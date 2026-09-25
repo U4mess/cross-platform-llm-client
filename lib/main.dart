@@ -17,6 +17,7 @@ import 'core/theme.dart';
 import 'core/routes.dart';
 import 'services/hive_service.dart';
 import 'services/inference_service.dart';
+import 'services/llama_service.dart';
 import 'services/cloud_service.dart';
 import 'services/download_service.dart';
 import 'services/device_info_service.dart';
@@ -76,6 +77,7 @@ void main() {
     Get.put(CloudModelController());
 
     Get.put(InferenceService());
+    Get.put(LlamaService());
     Get.put(CloudService());
     Get.put(DownloadService());
     Get.put(LocalImageService());

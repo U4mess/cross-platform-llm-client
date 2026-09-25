@@ -17,7 +17,13 @@ NS_ASSUME_NONNULL_BEGIN
              nGpuLayers:(int)nGpuLayers
          kvQuantization:(nullable NSString*)kvQuantization
            contextShift:(BOOL)contextShift
+          nThreadsBatch:(int)nThreadsBatch
+                 nBatch:(int)nBatch
+                nUbatch:(int)nUbatch
        progressCallback:(LlamaProgressCallback)progressCallback;
+
+/// Dynamically set generation threads and batch threads.
+- (void)setNThreads:(int)nThreads nThreadsBatch:(int)nThreadsBatch;
 
 /// Start text generation. Calls tokenCallback for each token synchronously (runs on caller thread).
 - (void)generateWithPrompt:(NSString*)prompt

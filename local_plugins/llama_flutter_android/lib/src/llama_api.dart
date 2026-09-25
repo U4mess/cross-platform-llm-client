@@ -35,6 +35,9 @@ class ModelConfig {
     this.mmprojPath,
     this.kvQuantization,
     this.contextShift = true,
+    this.nThreadsBatch,
+    this.nBatch,
+    this.nUbatch,
   });
 
   /// Absolute path to the `.gguf` model file on device storage.
@@ -60,6 +63,15 @@ class ModelConfig {
   /// Whether context shifting (sliding window) is enabled.
   bool contextShift;
 
+  /// Number of CPU threads to use for batch/prefill processing.
+  int? nThreadsBatch;
+
+  /// Logical maximum batch size for evaluation.
+  int? nBatch;
+
+  /// Physical maximum batch size for evaluation.
+  int? nUbatch;
+
   Object encode() {
     return <Object?>[
       modelPath,
@@ -69,6 +81,9 @@ class ModelConfig {
       mmprojPath,
       kvQuantization,
       contextShift,
+      nThreadsBatch,
+      nBatch,
+      nUbatch,
     ];
   }
 
@@ -82,6 +97,9 @@ class ModelConfig {
       mmprojPath: result[4] as String?,
       kvQuantization: result.length > 5 ? result[5] as String? : null,
       contextShift: result.length > 6 ? (result[6] as bool? ?? true) : true,
+      nThreadsBatch: result.length > 7 ? result[7] as int? : null,
+      nBatch: result.length > 8 ? result[8] as int? : null,
+      nUbatch: result.length > 9 ? result[9] as int? : null,
     );
   }
 }
@@ -798,6 +816,29 @@ class LlamaHostApi {
       );
     } else {
       return (pigeonVar_replyList[0] as GpuInfo?)!;
+    }
+  }
+
+  /// Dynamically set CPU generation threads and batch threads
+  Future<void> setNThreads(int threads, int batchThreads) async {
+    final String pigeonVar_channelName = 'dev.flutter.pigeon.llama_flutter_android.LlamaHostApi.setNThreads$pigeonVar_messageChannelSuffix';
+    final BasicMessageChannel<Object?> pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final List<Object?>? pigeonVar_replyList =
+        await pigeonVar_channel.send(<Object?>[threads, batchThreads]) as List<Object?>?;
+    if (pigeonVar_replyList == null) {
+      throw _createConnectionError(pigeonVar_channelName);
+    } else if (pigeonVar_replyList.length > 1) {
+      throw PlatformException(
+        code: pigeonVar_replyList[0]! as String,
+        message: pigeonVar_replyList[1] as String?,
+        details: pigeonVar_replyList[2],
+      );
+    } else {
+      return;
     }
   }
 }

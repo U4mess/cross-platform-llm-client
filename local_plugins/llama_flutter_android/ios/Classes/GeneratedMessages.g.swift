@@ -85,6 +85,9 @@ struct ModelConfig {
   var mmprojPath: String? = nil
   var kvQuantization: String? = nil
   var contextShift: Bool? = true
+  var nThreadsBatch: Int64? = nil
+  var nBatch: Int64? = nil
+  var nUbatch: Int64? = nil
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
   static func fromList(_ pigeonVar_list: [Any?]) -> ModelConfig? {
@@ -95,6 +98,9 @@ struct ModelConfig {
     let mmprojPath: String? = pigeonVar_list.count > 4 ? nilOrValue(pigeonVar_list[4]) : nil
     let kvQuantization: String? = pigeonVar_list.count > 5 ? nilOrValue(pigeonVar_list[5]) : nil
     let contextShift: Bool? = pigeonVar_list.count > 6 ? (nilOrValue(pigeonVar_list[6]) ?? true) : true
+    let nThreadsBatch: Int64? = pigeonVar_list.count > 7 ? nilOrValue(pigeonVar_list[7]) : nil
+    let nBatch: Int64? = pigeonVar_list.count > 8 ? nilOrValue(pigeonVar_list[8]) : nil
+    let nUbatch: Int64? = pigeonVar_list.count > 9 ? nilOrValue(pigeonVar_list[9]) : nil
 
     return ModelConfig(
       modelPath: modelPath,
@@ -103,7 +109,10 @@ struct ModelConfig {
       nGpuLayers: nGpuLayers,
       mmprojPath: mmprojPath,
       kvQuantization: kvQuantization,
-      contextShift: contextShift
+      contextShift: contextShift,
+      nThreadsBatch: nThreadsBatch,
+      nBatch: nBatch,
+      nUbatch: nUbatch
     )
   }
   func toList() -> [Any?] {
@@ -115,6 +124,9 @@ struct ModelConfig {
       mmprojPath,
       kvQuantization,
       contextShift,
+      nThreadsBatch,
+      nBatch,
+      nUbatch,
     ]
   }
 }
@@ -496,6 +508,8 @@ protocol LlamaHostApi {
   /// Detect GPU capabilities. Returns Vulkan device info and a non-binding
   /// recommendedGpuLayers value. Caller decides actual gpuLayers to use.
   func detectGpu(completion: @escaping (Result<GpuInfo, Error>) -> Void)
+  /// Dynamically set CPU generation threads and batch threads
+  func setNThreads(threads: Int64, batchThreads: Int64, completion: @escaping (Result<Void, Error>) -> Void)
 }
 
 /// Generated setup class from Pigeon to handle messages through the `binaryMessenger`.
@@ -713,6 +727,25 @@ class LlamaHostApiSetup {
       }
     } else {
       detectGpuChannel.setMessageHandler(nil)
+    }
+    /// Set CPU threads
+    let setNThreadsChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.llama_flutter_android.LlamaHostApi.setNThreads\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      setNThreadsChannel.setMessageHandler { message, reply in
+        let args = message as! [Any?]
+        let threadsArg = args[0] is Int64 ? args[0] as! Int64 : Int64(args[0] as! Int32)
+        let batchThreadsArg = args[1] is Int64 ? args[1] as! Int64 : Int64(args[1] as! Int32)
+        api.setNThreads(threads: threadsArg, batchThreads: batchThreadsArg) { result in
+          switch result {
+          case .success:
+            reply(wrapResult(nil))
+          case .failure(let error):
+            reply(wrapError(error))
+          }
+        }
+      }
+    } else {
+      setNThreadsChannel.setMessageHandler(nil)
     }
   }
 }

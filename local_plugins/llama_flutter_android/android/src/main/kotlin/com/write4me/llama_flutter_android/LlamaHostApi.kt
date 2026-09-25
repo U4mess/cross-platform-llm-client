@@ -70,7 +70,10 @@ data class ModelConfig (
   /** KV cache quantization type ('q8_0', 'q4_0', 'f16'). */
   val kvQuantization: String? = null,
   /** Whether context shifting (sliding window) is enabled. */
-  val contextShift: Boolean? = true
+  val contextShift: Boolean? = true,
+  val nThreadsBatch: Long? = null,
+  val nBatch: Long? = null,
+  val nUbatch: Long? = null
 )
  {
   companion object {
@@ -82,7 +85,10 @@ data class ModelConfig (
       val mmprojPath = pigeonVar_list[4] as String?
       val kvQuantization = if (pigeonVar_list.size > 5) pigeonVar_list[5] as String? else null
       val contextShift = if (pigeonVar_list.size > 6) pigeonVar_list[6] as Boolean? ?: true else true
-      return ModelConfig(modelPath, nThreads, contextSize, nGpuLayers, mmprojPath, kvQuantization, contextShift)
+      val nThreadsBatch = if (pigeonVar_list.size > 7) pigeonVar_list[7] as Long? else null
+      val nBatch = if (pigeonVar_list.size > 8) pigeonVar_list[8] as Long? else null
+      val nUbatch = if (pigeonVar_list.size > 9) pigeonVar_list[9] as Long? else null
+      return ModelConfig(modelPath, nThreads, contextSize, nGpuLayers, mmprojPath, kvQuantization, contextShift, nThreadsBatch, nBatch, nUbatch)
     }
   }
   fun toList(): List<Any?> {
@@ -93,7 +99,10 @@ data class ModelConfig (
       nGpuLayers,
       mmprojPath,
       kvQuantization,
-      contextShift
+      contextShift,
+      nThreadsBatch,
+      nBatch,
+      nUbatch
     )
   }
 }
@@ -453,6 +462,8 @@ interface LlamaHostApi {
    * recommendedGpuLayers value. Caller decides actual gpuLayers to use.
    */
   fun detectGpu(callback: (Result<GpuInfo>) -> Unit)
+  /** Dynamically set generation threads and batch threads */
+  fun setNThreads(threads: Long, batchThreads: Long, callback: (Result<Unit>) -> Unit)
 
   companion object {
     /** The codec used by LlamaHostApi. */
@@ -682,6 +693,26 @@ interface LlamaHostApi {
               } else {
                 val data = result.getOrNull()
                 reply.reply(wrapResult(data))
+              }
+            }
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.llama_flutter_android.LlamaHostApi.setNThreads$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val threadsArg = (args[0] as Number).toLong()
+            val batchThreadsArg = (args[1] as Number).toLong()
+            api.setNThreads(threadsArg, batchThreadsArg) { result: Result<Unit> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(wrapError(error))
+              } else {
+                reply.reply(wrapResult(null))
               }
             }
           }

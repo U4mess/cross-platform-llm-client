@@ -26,6 +26,9 @@ class LlamaController implements LlamaFlutterApi {
     int? gpuLayers,
     String? kvQuantization,
     bool contextShift = true,
+    int? batchThreads,
+    int? batchSize,
+    int? ubatchSize,
   }) async {
     if (_isLoading) throw StateError('Already loading');
     final loaded = await _safeIsModelLoaded();
@@ -40,10 +43,21 @@ class LlamaController implements LlamaFlutterApi {
         nGpuLayers: gpuLayers,
         kvQuantization: kvQuantization,
         contextShift: contextShift,
+        nThreadsBatch: batchThreads,
+        nBatch: batchSize,
+        nUbatch: ubatchSize ?? batchSize,
       ));
     } finally {
       _isLoading = false;
     }
+  }
+
+  /// Dynamically update generation threads and batch threads for the loaded model
+  Future<void> setNThreads({
+    required int threads,
+    required int batchThreads,
+  }) async {
+    await _api.setNThreads(threads, batchThreads);
   }
 
   /// Generate text with streaming tokens

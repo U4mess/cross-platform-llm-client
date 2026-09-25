@@ -59,6 +59,9 @@ class AppConstants {
   static const String keyImageGenSize = 'image_gen_size';
   static const String keyImageGenQuantization = 'image_gen_quantization';
   static const String keyFontScale = 'font_scale';
+  static const String keyCpuThreads = 'cpu_threads';
+  static const String keyBatchThreads = 'batch_threads';
+  static const String keyBatchSize = 'batch_size';
 
   // Default Model Config
   static const double defaultTemperature = 0.7;
@@ -66,6 +69,10 @@ class AppConstants {
   static const int defaultContextSize = 4096;
   static const String defaultKvQuantization = 'q8_0';
   static const bool defaultContextShift = true;
+  static const int defaultCpuThreads = 4;
+  static const int defaultBatchThreads = 6;
+  static const int defaultBatchSize = 512;
+  static const List<int> batchSizeOptions = [128, 256, 512, 1024];
   static const String defaultLiteRtPerformanceMode = 'auto_fast';
   static const int defaultImageSteps = 1;
   static const bool defaultImageGenForceCpu = true;

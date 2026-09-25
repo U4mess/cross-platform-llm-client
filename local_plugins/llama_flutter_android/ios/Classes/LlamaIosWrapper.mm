@@ -82,6 +82,9 @@ static std::string sanitizeUTF8(const char* str, size_t len) {
              nGpuLayers:(int)nGpuLayers
          kvQuantization:(nullable NSString*)kvQuantization
            contextShift:(BOOL)contextShift
+          nThreadsBatch:(int)nThreadsBatch
+                 nBatch:(int)nBatch
+                nUbatch:(int)nUbatch
        progressCallback:(LlamaProgressCallback)progressCallback {
 
     g_context_shift = (bool)contextShift;
@@ -118,8 +121,9 @@ static std::string sanitizeUTF8(const char* str, size_t len) {
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx           = contextSize;
     ctx_params.n_threads       = nThreads;
-    ctx_params.n_threads_batch = nThreads;
-    ctx_params.n_batch         = 512;
+    ctx_params.n_threads_batch = nThreadsBatch > 0 ? nThreadsBatch : nThreads;
+    ctx_params.n_batch         = nBatch > 0 ? (uint32_t)nBatch : 512;
+    ctx_params.n_ubatch        = nUbatch > 0 ? (uint32_t)nUbatch : ctx_params.n_batch;
     ctx_params.type_k          = kv_type_k;
     ctx_params.type_v          = kv_type_v;
 
@@ -386,6 +390,13 @@ static std::string sanitizeUTF8(const char* str, size_t len) {
 
 - (void)setSystemPromptLength:(int)length {
     g_system_prompt_length = length;
+}
+
+- (void)setNThreads:(int)nThreads nThreadsBatch:(int)nThreadsBatch {
+    if (g_ctx) {
+        llama_set_n_threads(g_ctx, nThreads, nThreadsBatch);
+        LOGI("iOS dynamic threads updated: %d gen, %d batch", nThreads, nThreadsBatch);
+    }
 }
 
 @end

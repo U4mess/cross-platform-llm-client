@@ -53,6 +53,9 @@ class InferenceEngine {
     bool enableLiteRtVision = false,
     String kvQuantization = 'q8_0',
     bool contextShift = true,
+    int? cpuThreads,
+    int? batchThreads,
+    int? batchSize,
     void Function(double)? onProgress,
   }) async {
     _disposed = false;
@@ -105,7 +108,9 @@ class InferenceEngine {
 
     // ── Thread Tuning ──
     int threads;
-    if (gpuLayers > 0) {
+    if (cpuThreads != null && cpuThreads > 0) {
+      threads = cpuThreads;
+    } else if (gpuLayers > 0) {
       threads = deviceTier == 'ultra'
           ? 4
           : deviceTier == 'high'
@@ -121,12 +126,15 @@ class InferenceEngine {
                   : 3;
     }
 
+    int bThreads = batchThreads ?? (threads >= 6 ? threads : 6);
+
     // Google Tensor SoC (Pixel 6/7/8) has known Q4_K_M dequant bugs
     // that corrupt logits at >1 thread on Gemma models. Force single-threaded
     // to eliminate KV cache races in the quantization dot-product path.
     final modelName = modelPath.toLowerCase();
     if (isTensorSoC && modelName.contains('gemma')) {
       threads = 1;
+      bThreads = 1;
       print(
           '[Inference] Tensor SoC + Gemma detected — forcing single-threaded inference');
     }
@@ -148,6 +156,9 @@ class InferenceEngine {
       gpuLayers: gpuLayers,
       kvQuantization: kvQuantization,
       contextShift: contextShift,
+      batchThreads: bThreads,
+      batchSize: batchSize ?? 512,
+      ubatchSize: batchSize ?? 512,
     );
     _hasLoadedModel = true;
 
@@ -652,6 +663,13 @@ class InferenceEngine {
     }
     // llama.cpp (GGUF) is stateless per-generation — no native
     // conversation object to reset.
+  }
+
+  /// Dynamically update generation threads and batch threads for active model
+  Future<void> setNThreads(int threads, int batchThreads) async {
+    if (_controller != null && _hasLoadedModel) {
+      await _controller!.setNThreads(threads: threads, batchThreads: batchThreads);
+    }
   }
 
   Future<ContextInfo?> getContextInfo() async {

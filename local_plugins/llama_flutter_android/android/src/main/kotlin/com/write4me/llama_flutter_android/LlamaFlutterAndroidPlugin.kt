@@ -57,7 +57,10 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
                     config.contextSize,
                     config.nGpuLayers ?: 0L,
                     config.kvQuantization ?: "q8_0",
-                    config.contextShift ?: true
+                    config.contextShift ?: true,
+                    config.nThreadsBatch ?: config.nThreads,
+                    config.nBatch ?: 512L,
+                    config.nUbatch ?: config.nBatch ?: 512L
                 ) { progress ->
                     scope.launch {
                         withContext(Dispatchers.Main) {
@@ -386,6 +389,23 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
         }
     }
 
+    override fun setNThreads(threads: Long, batchThreads: Long, callback: (Result<Unit>) -> Unit) {
+        ensureNativeLoaded()?.let {
+            callback(Result.failure(it))
+            return
+        }
+        if (!isModelLoaded.get()) {
+            callback(Result.success(Unit))
+            return
+        }
+        try {
+            nativeSetNThreads(threads.toInt(), batchThreads.toInt())
+            callback(Result.success(Unit))
+        } catch (e: Exception) {
+            callback(Result.failure(e))
+        }
+    }
+
     private fun ensureNativeLoaded(): Throwable? {
         nativeLoadError?.let { return it }
 
@@ -425,8 +445,13 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
         nGpuLayers: Long,
         kvQuantization: String,
         contextShift: Boolean,
+        nThreadsBatch: Long,
+        nBatch: Long,
+        nUbatch: Long,
         progressCallback: (Double) -> Unit
     )
+
+    private external fun nativeSetNThreads(nThreads: Int, nThreadsBatch: Int)
 
     private external fun nativeGenerate(
         prompt: String,

@@ -150,6 +150,9 @@ class SettingsView extends GetView<SettingsController> {
               _sectionLabel(context, 'INFERENCE & MEMORY'),
               _buildInferenceMemoryCard(context, isDark),
               const SizedBox(height: 24),
+              _sectionLabel(context, 'CPU & PERFORMANCE TUNING'),
+              _buildCpuPerformanceCard(context, isDark),
+              const SizedBox(height: 24),
               _sectionLabel(context, 'MODEL PARAMETERS'),
               _buildLiteRtCard(context, isDark),
               const SizedBox(height: 10),
@@ -443,6 +446,207 @@ class SettingsView extends GetView<SettingsController> {
           onTap: () => controller.setLiteRtPerformanceMode(modes[i].value),
         ),
     ]);
+  }
+
+  Widget _buildCpuPerformanceCard(BuildContext context, bool isDark) {
+    return _appleGroupedCard(context, isDark, children: [
+      _threadTuningSlider(
+        context,
+        isDark,
+        label: 'Generation Threads',
+        subtitle:
+            'Threads used during token generation. 4-6 threads recommended for mobile stability.',
+        value: controller.cpuThreads.value,
+        min: 1,
+        max: 8,
+        onChanged: (v) => controller.setCpuThreads(v),
+        icon: Icons.speed_rounded,
+      ),
+      _parameterDivider(isDark),
+      _threadTuningSlider(
+        context,
+        isDark,
+        label: 'Prompt Processing Threads',
+        subtitle: 'Threads used for evaluating initial prompt context.',
+        value: controller.batchThreads.value,
+        min: 1,
+        max: 8,
+        onChanged: (v) => controller.setBatchThreads(v),
+        icon: Icons.bolt_rounded,
+      ),
+      _parameterDivider(isDark),
+      _batchSizeDropdown(
+        context,
+        isDark,
+        value: controller.batchSize.value,
+        onChanged: (v) => controller.setBatchSize(v),
+      ),
+    ]);
+  }
+
+  Widget _threadTuningSlider(
+    BuildContext context,
+    bool isDark, {
+    required String label,
+    required String subtitle,
+    required int value,
+    required int min,
+    required int max,
+    required ValueChanged<int> onChanged,
+    required IconData icon,
+  }) {
+    final accent = isDark ? const Color(0xFF0A84FF) : AppColors.primary;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _iconBox(accent, icon),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: GoogleFonts.inter(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w400,
+                        color: isDark ? Colors.white : Colors.black,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: Theme.of(context).hintColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  '$value',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    color: accent,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          Slider(
+            value: value.toDouble().clamp(min.toDouble(), max.toDouble()),
+            min: min.toDouble(),
+            max: max.toDouble(),
+            divisions: max - min,
+            activeColor: accent,
+            onChanged: (v) {
+              HapticFeedback.selectionClick();
+              onChanged(v.toInt());
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _batchSizeDropdown(
+    BuildContext context,
+    bool isDark, {
+    required int value,
+    required ValueChanged<int> onChanged,
+  }) {
+    const options = [256, 512, 1024];
+    final selectedValue = options.contains(value) ? value : 512;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          _iconBox(const Color(0xFF5856D6), Icons.layers_outlined),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Batch Size',
+                  style: GoogleFonts.inter(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w400,
+                    color: isDark ? Colors.white : Colors.black,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Tokens evaluated concurrently during prefill.',
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    color: Theme.of(context).hintColor,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.08)
+                  : Colors.black.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.12)
+                    : Colors.black.withValues(alpha: 0.08),
+              ),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<int>(
+                value: selectedValue,
+                isDense: true,
+                dropdownColor:
+                    isDark ? const Color(0xFF2C2C2E) : Colors.white,
+                icon: Icon(Icons.unfold_more_rounded,
+                    size: 18, color: Theme.of(context).hintColor),
+                items: options.map((size) {
+                  return DropdownMenuItem<int>(
+                    value: size,
+                    child: Text(
+                      '$size',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: isDark ? Colors.white : Colors.black,
+                      ),
+                    ),
+                  );
+                }).toList(),
+                onChanged: (newVal) {
+                  if (newVal != null) {
+                    onChanged(newVal);
+                  }
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildModelParametersCard(BuildContext context, bool isDark) {

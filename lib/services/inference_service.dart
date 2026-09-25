@@ -122,6 +122,24 @@ class InferenceService extends GetxService {
           ) ??
           AppConstants.defaultContextShift;
 
+      final cpuThreads = _hive.getSetting<int>(
+            AppConstants.keyCpuThreads,
+            defaultValue: AppConstants.defaultCpuThreads,
+          ) ??
+          AppConstants.defaultCpuThreads;
+
+      final batchThreads = _hive.getSetting<int>(
+            AppConstants.keyBatchThreads,
+            defaultValue: AppConstants.defaultBatchThreads,
+          ) ??
+          AppConstants.defaultBatchThreads;
+
+      final batchSize = _hive.getSetting<int>(
+            AppConstants.keyBatchSize,
+            defaultValue: AppConstants.defaultBatchSize,
+          ) ??
+          AppConstants.defaultBatchSize;
+
       final finalContextSize =
           isLiteRt ? contextSize.clamp(512, 4096) : contextSize;
 
@@ -149,6 +167,9 @@ class InferenceService extends GetxService {
         enableLiteRtVision: enableLiteRtVision,
         kvQuantization: kvQuantization,
         contextShift: contextShift,
+        cpuThreads: cpuThreads,
+        batchThreads: batchThreads,
+        batchSize: batchSize,
       );
 
       if (!result.success &&
@@ -252,6 +273,26 @@ class InferenceService extends GetxService {
     contextTokensUsed.value = 0;
     contextTokensTotal.value = 0;
     _sessionNativeRuntime = '';
+  }
+
+  /// Dynamically updates CPU inference threads without reloading the model.
+  Future<void> updateThreads({int? cpuThreads, int? batchThreads}) async {
+    final threads = cpuThreads ??
+        _hive.getSetting<int>(AppConstants.keyCpuThreads,
+            defaultValue: AppConstants.defaultCpuThreads) ??
+        AppConstants.defaultCpuThreads;
+    final bThreads = batchThreads ??
+        _hive.getSetting<int>(AppConstants.keyBatchThreads,
+            defaultValue: AppConstants.defaultBatchThreads) ??
+        AppConstants.defaultBatchThreads;
+    if (_engine != null && isModelLoaded.value && loadedModelRuntime.value == 'llama') {
+      try {
+        await _engine!.setNThreads(threads, bThreads);
+        Get.find<AppLogService>().info('Updated native threads: gen=$threads, batch=$bThreads');
+      } catch (e) {
+        Get.find<AppLogService>().warning('Dynamic thread update failed: $e');
+      }
+    }
   }
 
   /// Reloads the currently loaded model with updated settings (context size, KV quantization, etc.)
@@ -458,6 +499,9 @@ class InferenceService extends GetxService {
     required bool enableLiteRtVision,
     String kvQuantization = 'q8_0',
     bool contextShift = true,
+    int? cpuThreads,
+    int? batchThreads,
+    int? batchSize,
   }) async {
     var gpuLoadFailed = false;
     try {
@@ -476,6 +520,9 @@ class InferenceService extends GetxService {
         enableLiteRtVision: enableLiteRtVision,
         kvQuantization: kvQuantization,
         contextShift: contextShift,
+        cpuThreads: cpuThreads,
+        batchThreads: batchThreads,
+        batchSize: batchSize,
         onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
       );
       if (result.success ||
@@ -499,6 +546,9 @@ class InferenceService extends GetxService {
         enableLiteRtVision: enableLiteRtVision,
         kvQuantization: kvQuantization,
         contextShift: contextShift,
+        cpuThreads: cpuThreads,
+        batchThreads: batchThreads,
+        batchSize: batchSize,
         onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
       );
     } catch (e) {
@@ -519,6 +569,9 @@ class InferenceService extends GetxService {
             enableLiteRtVision: enableLiteRtVision,
             kvQuantization: kvQuantization,
             contextShift: contextShift,
+            cpuThreads: cpuThreads,
+            batchThreads: batchThreads,
+            batchSize: batchSize,
             onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
           );
         } catch (cpuError) {

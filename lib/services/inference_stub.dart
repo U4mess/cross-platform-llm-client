@@ -33,6 +33,9 @@ class InferenceEngine {
     bool enableLiteRtVision = false,
     String kvQuantization = 'q8_0',
     bool contextShift = true,
+    int? cpuThreads,
+    int? batchThreads,
+    int? batchSize,
     void Function(double)? onProgress,
   }) async {
     return LoadResult(
@@ -40,6 +43,8 @@ class InferenceEngine {
       message: 'Local inference is not available on this platform.',
     );
   }
+
+  Future<void> setNThreads(int threads, int batchThreads) async {}
 
   Future<String> generate({
     required String prompt,
@@ -58,4 +63,5 @@ class InferenceEngine {
   Future<void> stop() async {}
   Future<dynamic> getContextInfo() async => null;
   Future<void> dispose() async {}
+  Future<void> resetConversation() async {}
 }

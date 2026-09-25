@@ -50,6 +50,9 @@ class SettingsController extends GetxController {
   final contextSize = AppConstants.defaultContextSize.obs;
   final kvQuantization = AppConstants.defaultKvQuantization.obs;
   final contextShift = AppConstants.defaultContextShift.obs;
+  final cpuThreads = AppConstants.defaultCpuThreads.obs;
+  final batchThreads = AppConstants.defaultBatchThreads.obs;
+  final batchSize = AppConstants.defaultBatchSize.obs;
   final liteRtPerformanceMode = AppConstants.defaultLiteRtPerformanceMode.obs;
   final imageSteps = 1.obs;
   final imageGenForceCpu = AppConstants.defaultImageGenForceCpu.obs;
@@ -201,6 +204,15 @@ class SettingsController extends GetxController {
     contextShift.value = _hive.getSetting(AppConstants.keyContextShift,
             defaultValue: AppConstants.defaultContextShift) ??
         AppConstants.defaultContextShift;
+    cpuThreads.value = _hive.getSetting<int>(AppConstants.keyCpuThreads,
+            defaultValue: AppConstants.defaultCpuThreads) ??
+        AppConstants.defaultCpuThreads;
+    batchThreads.value = _hive.getSetting<int>(AppConstants.keyBatchThreads,
+            defaultValue: AppConstants.defaultBatchThreads) ??
+        AppConstants.defaultBatchThreads;
+    batchSize.value = _hive.getSetting<int>(AppConstants.keyBatchSize,
+            defaultValue: AppConstants.defaultBatchSize) ??
+        AppConstants.defaultBatchSize;
     liteRtPerformanceMode.value = _hive.getSetting(
           AppConstants.keyLiteRtPerformanceMode,
           defaultValue: AppConstants.defaultLiteRtPerformanceMode,
@@ -692,6 +704,51 @@ class SettingsController extends GetxController {
   Future<void> setContextShift(bool value) async {
     contextShift.value = value;
     await _hive.setSetting(AppConstants.keyContextShift, value);
+    try {
+      final inference = Get.find<InferenceService>();
+      if (inference.isModelLoaded.value &&
+          inference.loadedModelRuntime.value != 'litert') {
+        await inference.reloadModel();
+      }
+    } catch (_) {}
+  }
+
+  int get currentCpuThreads => cpuThreads.value;
+  int get currentBatchThreads => batchThreads.value;
+  int get currentBatchSize => batchSize.value;
+
+  Future<void> setCpuThreads(int value) async {
+    final clamped = value.clamp(1, 8);
+    cpuThreads.value = clamped;
+    await _hive.setSetting(AppConstants.keyCpuThreads, clamped);
+    try {
+      final inference = Get.find<InferenceService>();
+      if (inference.isModelLoaded.value &&
+          inference.loadedModelRuntime.value == 'llama') {
+        await inference.updateThreads(cpuThreads: clamped);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> setBatchThreads(int value) async {
+    final clamped = value.clamp(1, 8);
+    batchThreads.value = clamped;
+    await _hive.setSetting(AppConstants.keyBatchThreads, clamped);
+    try {
+      final inference = Get.find<InferenceService>();
+      if (inference.isModelLoaded.value &&
+          inference.loadedModelRuntime.value == 'llama') {
+        await inference.updateThreads(batchThreads: clamped);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> setBatchSize(int value) async {
+    final normalized = AppConstants.batchSizeOptions.contains(value)
+        ? value
+        : AppConstants.defaultBatchSize;
+    batchSize.value = normalized;
+    await _hive.setSetting(AppConstants.keyBatchSize, normalized);
     try {
       final inference = Get.find<InferenceService>();
       if (inference.isModelLoaded.value &&

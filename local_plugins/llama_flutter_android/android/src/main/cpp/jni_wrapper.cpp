@@ -214,6 +214,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
     JNIEnv* env, jobject thiz,
     jstring path, jlong n_threads, jlong ctx_size, jlong n_gpu_layers,
     jstring kv_quantization, jboolean context_shift,
+    jlong n_threads_batch, jlong n_batch, jlong n_ubatch,
     jobject progress_callback) {
     
     if (!path) {
@@ -303,10 +304,11 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = ctx_size;
     ctx_params.n_threads = n_threads;
-    ctx_params.n_threads_batch = n_threads;
+    ctx_params.n_threads_batch = (n_threads_batch > 0) ? (int32_t)n_threads_batch : (int32_t)n_threads;
     
-    // Memory optimization: reduce memory usage by limiting batch processing
-    ctx_params.n_batch = 512;  // Process smaller batches to reduce memory spikes
+    // Batch processing controls: evaluate prompt/tokens concurrently
+    ctx_params.n_batch = (n_batch > 0) ? (uint32_t)n_batch : 512;
+    ctx_params.n_ubatch = (n_ubatch > 0) ? (uint32_t)n_ubatch : ctx_params.n_batch;
 
     // KV cache quantization: default GGML_TYPE_Q8_0 with fallback to FP16
     ctx_params.type_k = kv_type_k;
@@ -707,3 +709,14 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeSetSys
     // Currently not used but available for future smart context management
     LOGI("System prompt length set to: %d tokens (currently unused)", length);
 }
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeSetNThreads(
+    JNIEnv* env, jobject thiz, jint n_threads, jint n_threads_batch) {
+    if (g_ctx) {
+        llama_set_n_threads(g_ctx, n_threads, n_threads_batch);
+        LOGI("Dynamic threads updated via llama_set_n_threads: n_threads=%d, n_threads_batch=%d",
+             n_threads, n_threads_batch);
+    }
+}
+
