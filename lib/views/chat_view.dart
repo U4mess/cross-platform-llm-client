@@ -773,6 +773,7 @@ class ChatView extends GetView<ChatController> {
               // Unified mic / send / stop button
               Obx(() {
                 final loading = controller.isLoading.value;
+                final stopping = controller.isStoppingGeneration.value;
                 final listening = controller.isListening.value;
                 final hasContent = controller.inputText.value.isNotEmpty ||
                     controller.selectedFileName.value != null ||
@@ -783,11 +784,11 @@ class ChatView extends GetView<ChatController> {
                 final IconData iconData;
                 final VoidCallback? onTap;
 
-                if (loading) {
-                  // AI generating → red stop
+                if (loading || stopping) {
+                  // AI generating or stopping → red stop
                   bgColor = const Color(0xFFFF3B30);
                   iconData = Icons.stop_rounded;
-                  onTap = controller.stopGenerating;
+                  onTap = stopping ? null : () => controller.stopGenerating();
                 } else if (listening) {
                   // STT active → red stop
                   bgColor = const Color(0xFFFF3B30);

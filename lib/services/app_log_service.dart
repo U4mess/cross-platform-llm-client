@@ -48,6 +48,11 @@ class AppLogService extends GetxService {
   }
 
   void _add(String level, String message, Object? details) {
+    if (entries.isNotEmpty &&
+        entries.first.message == message &&
+        entries.first.level == level) {
+      return;
+    }
     entries.insert(
       0,
       AppLogEntry(

@@ -146,7 +146,6 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
                     request.penalizeNewline
                 ) { token ->
                     if (token.startsWith("[STAGE]: ")) {
-                        Log.i(TAG, token.removePrefix("[STAGE]: "))
                         mainHandler.post {
                             flutterApi.onToken(token) { }
                         }
@@ -184,6 +183,7 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
                 }
             } finally {
                 isGenerating.set(false)
+                isStopping.set(false)
             }
         }
     }
@@ -195,7 +195,17 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
         if (nativeLoadError == null) {
             nativeStop()
         }
-        callback(Result.success(Unit))
+        scope.launch(Dispatchers.Default) {
+            try {
+                generationJob?.join()
+            } catch (e: Exception) {
+                Log.w(TAG, "[$reqId] Exception waiting for generationJob to join: ${e.message}")
+            }
+            withContext(Dispatchers.Main) {
+                Log.i(TAG, "[$reqId] [Stop] Native generation completed after stop")
+                callback(Result.success(Unit))
+            }
+        }
     }
 
     override fun dispose(callback: (Result<Unit>) -> Unit) {
@@ -279,7 +289,6 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
                     request.penalizeNewline
                 ) { token ->
                     if (token.startsWith("[STAGE]: ")) {
-                        Log.i(TAG, token.removePrefix("[STAGE]: "))
                         mainHandler.post {
                             flutterApi.onToken(token) { }
                         }
@@ -317,6 +326,7 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
                 }
             } finally {
                 isGenerating.set(false)
+                isStopping.set(false)
             }
         }
     }

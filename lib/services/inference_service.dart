@@ -384,7 +384,6 @@ class InferenceService extends GetxService {
     if (Get.isRegistered<AppLogService>()) {
       Get.find<AppLogService>().info(sendMsg);
     }
-    print(sendMsg);
 
     final startTime = DateTime.now();
     DateTime? firstVisibleTokenAt;
@@ -482,17 +481,20 @@ class InferenceService extends GetxService {
     if (Get.isRegistered<AppLogService>()) {
       Get.find<AppLogService>().info(stopMsg);
     }
-    print(stopMsg);
+    final engine = _engine;
+    if (engine != null) {
+      try {
+        await engine.stop();
+      } catch (e) {
+        if (Get.isRegistered<AppLogService>()) {
+          Get.find<AppLogService>().warning('[$_activeRequestId] Engine stop error: $e');
+        }
+      }
+    }
     isGenerating.value = false;
     tokenCount.value = 0;
     generationSource.value = '';
     streamingText.value = '';
-    final engine = _engine;
-    if (engine != null) {
-      unawaited(engine.stop().timeout(const Duration(seconds: 1)).catchError(
-            (_) {},
-          ));
-    }
   }
 
   /// Reset the native conversation context. Call this whenever the user

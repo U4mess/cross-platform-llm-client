@@ -352,18 +352,21 @@ class InferenceEngine {
     final buffer = StringBuffer();
     bool completed = false;
 
-    void finish(String result) {
+    void finish(String result, {bool keepSubscription = false}) {
       if (!completed && !_disposed) {
         completed = true;
         _idleTimer?.cancel();
-        _subscription?.cancel();
+        if (!keepSubscription) {
+          _subscription?.cancel();
+          _subscription = null;
+        }
         _onStop = null;
         if (!completer.isCompleted) completer.complete(result);
       }
     }
 
     _onStop = () {
-      finish(buffer.toString());
+      finish(buffer.toString(), keepSubscription: true);
     };
 
     // ── Use generateChat() for native template handling ──
@@ -384,7 +387,9 @@ class InferenceEngine {
         repeatLastN: 64,
       );
     } catch (e) {
-      print('[$req] generateChat() failed: $e — fallback to generate()');
+      if (Get.isRegistered<AppLogService>()) {
+        Get.find<AppLogService>().warning('[$req] generateChat() failed: $e — fallback to generate()');
+      }
       try {
         await _controller!.stop();
       } catch (_) {}
@@ -411,7 +416,6 @@ class InferenceEngine {
           if (Get.isRegistered<AppLogService>()) {
             Get.find<AppLogService>().info(stageMsg);
           }
-          print(stageMsg);
           return;
         }
         if (tokenCount == 0) {
@@ -420,7 +424,6 @@ class InferenceEngine {
           if (Get.isRegistered<AppLogService>()) {
             Get.find<AppLogService>().info(firstTokenMsg);
           }
-          print(firstTokenMsg);
         }
         final clean = _sanitizeGemmaGarbage(token);
         if (clean.isEmpty) return;
@@ -433,7 +436,6 @@ class InferenceEngine {
           if (Get.isRegistered<AppLogService>()) {
             Get.find<AppLogService>().info(idleMsg);
           }
-          print(idleMsg);
           finish(buffer.toString());
         });
       },
@@ -443,7 +445,6 @@ class InferenceEngine {
         if (Get.isRegistered<AppLogService>()) {
           Get.find<AppLogService>().info(doneMsg);
         }
-        print(doneMsg);
         finish(buffer.toString());
       },
       onError: (error) {
@@ -451,7 +452,6 @@ class InferenceEngine {
         if (Get.isRegistered<AppLogService>()) {
           Get.find<AppLogService>().error(errMsg);
         }
-        print(errMsg);
         finish('ERROR: Generation failed — $error');
       },
     );
@@ -674,24 +674,33 @@ class InferenceEngine {
     if (Get.isRegistered<AppLogService>()) {
       Get.find<AppLogService>().info(stopMsg);
     }
-    print(stopMsg);
     _idleTimer?.cancel();
     final stopCallback = _onStop;
     _onStop = null;
     stopCallback?.call();
-    unawaited(_subscription?.cancel() ?? Future<void>.value());
+
     if (_isLiteRt) {
+      await _subscription?.cancel();
+      _subscription = null;
       _liteConversationHasMessages = true;
       return;
     }
+
     try {
-      await _controller?.stop().timeout(const Duration(milliseconds: 800));
-    } catch (_) {}
+      await _controller?.stop().timeout(const Duration(seconds: 25));
+    } catch (e) {
+      if (Get.isRegistered<AppLogService>()) {
+        Get.find<AppLogService>().warning('[$_activeRequestId] _controller.stop() timed out or failed: $e');
+      }
+    } finally {
+      await _subscription?.cancel();
+      _subscription = null;
+    }
+
     final stopDoneMsg = '[$_activeRequestId] [Stop] Stop completed in InferenceEngine';
     if (Get.isRegistered<AppLogService>()) {
       Get.find<AppLogService>().info(stopDoneMsg);
     }
-    print(stopDoneMsg);
   }
 
   /// Reset any persistent conversation state so the next generation

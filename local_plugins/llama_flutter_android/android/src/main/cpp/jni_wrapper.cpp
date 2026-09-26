@@ -714,10 +714,10 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
                    ", elapsed=" + formatDouble(prefill_elapsed_s, 2) + "s (" + formatDouble(prefill_tps, 1) + " t/s), code=" + std::to_string(last_decode_result));
 
         if (g_stop_flag.load()) {
-            LOGI("[%s] [%s] [Terminal] Stopped during prefill -> sending [DONE]",
-                 currentTimestamp().c_str(), req_id.c_str());
+            LOGI("[%s] [%s] [Terminal] Stopped during prefill -> sending [DONE], code=%d",
+                 currentTimestamp().c_str(), req_id.c_str(), last_decode_result);
             emit_stage("[" + req_id + "] [Terminal] reason=STOP_PREFILL, tokens=" + std::to_string(tokens_processed) +
-                       ", elapsed=" + formatDouble(prefill_elapsed_s, 2) + "s");
+                       ", elapsed=" + formatDouble(prefill_elapsed_s, 2) + "s, code=" + std::to_string(last_decode_result));
             jstring done_str = env->NewStringUTF("[DONE]");
             env->CallObjectMethod(token_callback, invokeMethod, done_str);
             env->DeleteLocalRef(done_str);
@@ -865,8 +865,9 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
 
             int decode_res = llama_decode(g_ctx, batch);
             if (decode_res != 0) {
+                last_decode_result = decode_res;
                 if (g_stop_flag.load() || decode_res == 2) {
-                    LOGI("[%s] [%s] Decode aborted by stop signal", currentTimestamp().c_str(), req_id.c_str());
+                    LOGI("[%s] [%s] Decode aborted by stop signal (code %d)", currentTimestamp().c_str(), req_id.c_str(), decode_res);
                 } else {
                     LOGE("[%s] [%s] Failed to decode token %d (res=%d)",
                          currentTimestamp().c_str(), req_id.c_str(), i + 1, decode_res);
@@ -880,11 +881,11 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
         double total_elapsed_s = std::chrono::duration<double>(req_end_time - req_start_time).count();
         double gen_tps = (total_elapsed_s > 0) ? (generated_tokens / total_elapsed_s) : 0.0;
         const char* term_reason = g_stop_flag.load() ? "STOP" : (is_eos ? "EOS" : "MAX_TOKENS");
-        LOGI("[%s] [%s] [Terminal] reason=%s, generated_tokens=%d, elapsed=%.2fs (%.1f t/s)",
-             currentTimestamp().c_str(), req_id.c_str(), term_reason, generated_tokens, total_elapsed_s, gen_tps);
+        LOGI("[%s] [%s] [Terminal] reason=%s, generated_tokens=%d, elapsed=%.2fs (%.1f t/s), code=%d",
+             currentTimestamp().c_str(), req_id.c_str(), term_reason, generated_tokens, total_elapsed_s, gen_tps, last_decode_result);
         emit_stage("[" + req_id + "] [Terminal] reason=" + std::string(term_reason) +
                    ", generated_tokens=" + std::to_string(generated_tokens) +
-                   ", elapsed=" + formatDouble(total_elapsed_s, 2) + "s (" + formatDouble(gen_tps, 1) + " t/s)");
+                   ", elapsed=" + formatDouble(total_elapsed_s, 2) + "s (" + formatDouble(gen_tps, 1) + " t/s), code=" + std::to_string(last_decode_result));
 
         jstring done_str = env->NewStringUTF("[DONE]");
         env->CallObjectMethod(token_callback, invokeMethod, done_str);

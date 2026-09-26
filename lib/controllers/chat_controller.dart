@@ -74,6 +74,7 @@ class ChatController extends GetxController {
   // Real-time streaming state — the AI response as it's being generated
   final streamingResponse = ''.obs;
   final isStreaming = false.obs;
+  final isStoppingGeneration = false.obs;
   final streamingAttachmentType = Rxn<String>();
 
   // Image generation progress (lightweight, replaces text-heavy updates)
@@ -559,7 +560,12 @@ class ChatController extends GetxController {
   // ─── Send Message ───────────────────────────────
 
   Future<void> sendMessage() async {
-    if (isLoading.value || isStreaming.value) return;
+    if (isLoading.value ||
+        isStreaming.value ||
+        isStoppingGeneration.value ||
+        Get.find<InferenceService>().isGenerating.value) {
+      return;
+    }
 
     final text = textController.text.trim();
     final hasAttachment =
@@ -990,12 +996,17 @@ class ChatController extends GetxController {
       if (Get.isRegistered<AppLogService>()) {
         Get.find<AppLogService>().info(resetMsg);
       }
-      print(resetMsg);
     }
   }
 
-  void stopGenerating() {
-    if (!isLoading.value && !isStreaming.value) return;
+  Future<void> stopGenerating() async {
+    if ((!isLoading.value && !isStreaming.value) || isStoppingGeneration.value) return;
+    isStoppingGeneration.value = true;
+    final activeReqId = Get.find<InferenceService>().activeRequestId;
+    final stopInitiatedMsg = '[$activeReqId] [Stop] stopGenerating triggered by user';
+    if (Get.isRegistered<AppLogService>()) {
+      Get.find<AppLogService>().info(stopInitiatedMsg);
+    }
     final partialResponse = streamingResponse.value.trim();
     if (partialResponse.isNotEmpty) {
       final tps = Get.find<InferenceService>().tokensPerSecond.value;
@@ -1005,7 +1016,6 @@ class ChatController extends GetxController {
       );
     }
     _generationSerial++;
-    isLoading.value = false;
     isStreaming.value = false;
     streamingAttachmentType.value = null;
     streamingResponse.value = '';
@@ -1023,14 +1033,22 @@ class ChatController extends GetxController {
     imageGenEstimatedSecs.value = 0;
     imageGenStartTime.value = null;
     imageGenDecoding.value = false;
-    final activeReqId = Get.find<InferenceService>().activeRequestId;
-    final resetMsg = '[$activeReqId] [UIReset] state reset (stop completed): isLoading=false, isStreaming=false';
-    if (Get.isRegistered<AppLogService>()) {
-      Get.find<AppLogService>().info(resetMsg);
-    }
-    print(resetMsg);
-    unawaited(Get.find<InferenceService>().stopGeneration());
     Get.find<LocalImageService>().cancelGeneration();
+
+    try {
+      await Get.find<InferenceService>().stopGeneration();
+    } catch (e) {
+      if (Get.isRegistered<AppLogService>()) {
+        Get.find<AppLogService>().warning('[$activeReqId] Error during stopGeneration: $e');
+      }
+    } finally {
+      isLoading.value = false;
+      isStoppingGeneration.value = false;
+      final resetMsg = '[$activeReqId] [UIReset] state reset (stop completed): isLoading=false, isStreaming=false';
+      if (Get.isRegistered<AppLogService>()) {
+        Get.find<AppLogService>().info(resetMsg);
+      }
+    }
   }
 
   void _saveAssistantMessage({
